@@ -59,7 +59,8 @@
 
 (deftest load-files-with-files
   (def expected ["fixtures/files/index.html" "fixtures/files/spacer.gif"])
-  (is (= expected (loader/load-files "fixtures/files"))))
+  (def actual (tuple ;(sorted (loader/load-files "fixtures/files"))))
+  (is (= expected actual)))
 
 
 (deftest load-files-with-empty-directory
