@@ -14,7 +14,7 @@
 (def- default-config
   {:input-dir            "."
    :output-dir           "_site"
-   :post-layout          :default
+   :default-layout       :default
    :post-permalink       (fn [frontmatter]
                            (let [year  (string/slice (frontmatter :date) 0 4)
                                  month (string/slice (frontmatter :date) 5 7)

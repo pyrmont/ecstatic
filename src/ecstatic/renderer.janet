@@ -15,6 +15,26 @@
     result))
 
 
+# TODO: Add tests
+(defn render-data
+  ```
+  Render data
+  ```
+  [data site-data &opt where]
+  (let [result      @""
+        content     (data :content)
+        frontmatter (data :frontmatter)
+        rendered    (render-content content {:frontmatter frontmatter :site site-data})
+        args        {:content rendered :frontmatter frontmatter :site site-data}
+        layout      (or (frontmatter :layout) (site-data :default-layout))
+        render-fn   (or (-> (site-data :templates)
+                            (get layout))
+                        (temple/create content where))]
+    (with-dyns [:out result]
+      (render-fn args))
+    result))
+
+
 (defn render-file
   ```
   Render a file
@@ -24,8 +44,8 @@
         parent-path (util/parent-path destination)]
     (util/mkpath parent-path)
     (if (util/has-frontmatter? filepath)
-      (let [data   (util/extract-data (slurp filepath))
-            output (render-content (data :content) {:frontmatter (data :frontmatter) :site site-data})]
+      (let [file-data (util/extract-data (slurp filepath))
+            output    (render-data file-data site-data)]
         (spit destination output))
       (util/copy-file filepath destination))))
 
@@ -54,13 +74,8 @@
   (let [content     (markable/markdown->html (post :content))
         frontmatter (post :frontmatter)
         destination (util/destination ((site-data :post-permalink) frontmatter) "" (site-data :output-dir))
-        layout      (keyword (or (frontmatter :layout)) (site-data :post-layout))
-        template-fn (-> (get site-data :templates) (get layout))
-        output      @""]
+        output      (render-data post site-data)]
     (util/mkpath (util/parent-path destination))
-    (assert (function? template-fn) (string "Error: No layout " layout ".html in layout directory"))
-    (with-dyns [:out output]
-      (template-fn {:content content :frontmatter frontmatter :site site-data}))
     (spit destination output)
     (render-attachments (frontmatter :attachments) frontmatter site-data)))
 
