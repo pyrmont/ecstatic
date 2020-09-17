@@ -1,4 +1,5 @@
 (import temple)
+(import markable)
 (import ./utilities :as util)
 
 
@@ -49,7 +50,7 @@
   Render a post
   ```
   [post site-data]
-  (let [content     (post :content)
+  (let [content     (markable/markdown->html (post :content))
         frontmatter (post :frontmatter)
         destination (util/destination ((site-data :post-permalink) frontmatter) "" (site-data :output-dir))
         layout      (keyword (or (frontmatter :layout)) (site-data :post-layout))
