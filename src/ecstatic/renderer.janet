@@ -1,6 +1,7 @@
 (import temple)
 (import markable)
 (import ./utilities :as util)
+(import ./grammar)
 
 
 (defn render-content
@@ -26,13 +27,18 @@
         frontmatter (data :frontmatter)
         rendered    (render-content content {:frontmatter frontmatter :site site-data})
         args        {:content rendered :frontmatter frontmatter :site site-data}
-        layout      (or (frontmatter :layout) (site-data :default-layout))
+        layout      (or (-?> (frontmatter :layout) keyword) (site-data :default-layout))
         render-fn   (or (-> (site-data :templates)
                             (get layout))
                         (temple/create content where))]
     (with-dyns [:out result]
       (render-fn args))
-    result))
+    (if (nil? (peg/match grammar/frontmatter result))
+      result
+      (let [data        (util/extract-data (string result))
+            content     (data :content)
+            frontmatter (merge frontmatter (data :frontmatter))]
+        (render-data {:content content :frontmatter frontmatter} site-data)))))
 
 
 (defn render-file
@@ -74,7 +80,7 @@
   (let [content     (markable/markdown->html (post :content))
         frontmatter (post :frontmatter)
         destination (util/destination ((site-data :post-permalink) frontmatter) "" (site-data :output-dir))
-        output      (render-data post site-data)]
+        output      (render-data {:content content :frontmatter frontmatter} site-data)]
     (util/mkpath (util/parent-path destination))
     (spit destination output)
     (render-attachments (frontmatter :attachments) frontmatter site-data)))
