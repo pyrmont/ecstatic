@@ -1,3 +1,6 @@
+(import ./grammar)
+
+
 # TODO: Add tests
 (defn add-to-path
   [path file]
@@ -21,6 +24,17 @@
     (->>
       (string/replace input-dir "" filepath)
       (add-to-path output-dir))))
+
+
+(defn extract-data
+  ```
+  Extract the frontmatter and content from a string, `s`
+  ```
+  [s &opt where]
+  (let [location (if (nil? where) "" (string where " "))
+        data (peg/match grammar/page s)]
+    (assert (not (empty? data)) (string "Error: The file " location "contains no data"))
+    (struct ;data)))
 
 
 (defn filename->basename

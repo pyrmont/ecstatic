@@ -8,7 +8,7 @@
     :space (some (set " \t\0\f"))
 
     # Front matter
-    :frontmatter (cmt (* "---" :nl (some (* :variable :nl)) "---" :nl) ,struct)
+    :frontmatter (cmt (* "---" :nl (any (* :variable :nl)) "---" :nl) ,struct)
     :variable (* :key ":" :space :value)
     :key (/ (capture (* :a (any (+ "_" :w)))) ,keyword)
     :value (+ :collection :scalar)

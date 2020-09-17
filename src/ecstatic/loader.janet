@@ -1,18 +1,7 @@
 (import temple)
 
 (import ./utilities :as util)
-(import ./grammar :as grammar)
-
-
-(defn extract-data
-  ```
-  Extract the frontmatter and content from a string, `s`
-  ```
-  [s &opt where]
-  (let [location (if (nil? where) "" (string where " "))
-        data (peg/match grammar/page s)]
-    (assert (not (empty? data)) (string "Error: The file " location "contains no data"))
-    (struct ;data)))
+(import ./grammar)
 
 
 (defn load-templates
@@ -89,7 +78,7 @@
     ;(map (fn [filename]
             (let [filepath      (util/add-to-path dir filename)
                   post-path     (post-path filepath)
-                  post-data     (extract-data (slurp post-path))
+                  post-data     (util/extract-data (slurp post-path))
                   basename      (util/filename->basename filename)
                   file-metadata (table :path post-path :attachments (load-attachments filepath) ;(peg/match grammar/post-basename basename))
                   frontmatter   (combine-metadata file-metadata (post-data :frontmatter))]

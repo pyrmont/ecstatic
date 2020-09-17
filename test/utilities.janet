@@ -2,6 +2,21 @@
 (import ../src/ecstatic/utilities :as util)
 
 
+(deftest extract-data-with-frontmatter-and-content
+  (def expected {:frontmatter {:foo "bar"} :content "Hello world"})
+  (is (= expected (util/extract-data "---\nfoo: bar\n---\nHello world"))))
+
+
+(deftest extract-data-with-empty-string
+  (def message "Error: The file contains no data")
+  (is (thrown? message (util/extract-data ""))))
+
+
+(deftest extract-data-with-empty-string-and-location
+  (def message "Error: The file foo.bar contains no data")
+  (is (thrown? message (util/extract-data "" "foo.bar"))))
+
+
 (deftest filename-to-basename-with-one-fullstop
   (is (= "foo" (util/filename->basename "foo.bar"))))
 

@@ -12,21 +12,6 @@
       (os/rm path))))
 
 
-(deftest extract-data-with-frontmatter-and-content
-  (def expected {:frontmatter {:foo "bar"} :content "Hello world"})
-  (is (= expected (loader/extract-data "---\nfoo: bar\n---\nHello world"))))
-
-
-(deftest extract-data-with-empty-string
-  (def message "Error: The file contains no data")
-  (is (thrown? message (loader/extract-data ""))))
-
-
-(deftest extract-data-with-empty-string-and-location
-  (def message "Error: The file foo.bar contains no data")
-  (is (thrown? message (loader/extract-data "" "foo.bar"))))
-
-
 (deftest load-templates-with-default-template
   (def expected "<html><body>Hello world</body></html>\n")
   (def template-fns (loader/load-templates "fixtures/templates"))

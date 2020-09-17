@@ -24,8 +24,9 @@
         parent-path (util/parent-path destination)]
     (util/mkpath parent-path)
     (if (util/has-frontmatter? filepath)
-      (->> (render-content (slurp filepath) {:site-data site-data})
-           (spit destination))
+      (let [data   (util/extract-data (slurp filepath))
+            output (render-content (data :content) {:frontmatter (data :frontmatter) :site site-data})]
+        (spit destination output))
       (util/copy-file filepath destination))))
 
 
@@ -59,7 +60,7 @@
     (util/mkpath (util/parent-path destination))
     (assert (function? template-fn) (string "Error: No layout " layout ".html in layout directory"))
     (with-dyns [:out output]
-      (template-fn {:content content :frontmatter frontmatter :site-data site-data}))
+      (template-fn {:content content :frontmatter frontmatter :site site-data}))
     (spit destination output)
     (render-attachments (frontmatter :attachments) frontmatter site-data)))
 

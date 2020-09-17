@@ -24,6 +24,11 @@
   (is (= expected (struct ;(peg/match grammar/page "Hello world")))))
 
 
+(deftest page-with-empty-frontmatter
+  (def expected {:content "Hello world" :frontmatter {}})
+  (is (= expected (struct ;(peg/match grammar/page "---\n---\nHello world")))))
+
+
 (deftest page-with-frontmatter-including-string
   (def expected {:frontmatter {:foo "bar"} :content "Hello world"})
   (is (= expected (struct ;(peg/match grammar/page "---\nfoo: bar\n---\nHello world")))))
