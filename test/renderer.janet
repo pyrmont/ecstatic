@@ -60,7 +60,7 @@
 (deftest render-with-blocking-file
   (spit "tmp" "Hello world\n")
   (def site-data {:output-dir "tmp"})
-  (def message "Error: Output directory is a file")
+  (def message "output directory is a file")
   (defer (rimraf "tmp")
     (is (thrown? message (renderer/render site-data)))))
 
@@ -69,16 +69,14 @@
   (os/mkdir "tmp")
   (def site-data {:input-dir "fixtures/files"
                   :output-dir "tmp"
-                  :post-layout :default
-                  :post-permalink (fn [frontmatter]
-                                    (string (string/slice (frontmatter :date) 0 4) "/" (frontmatter :slug) ".html"))
+                  :default-layout :default
                   :templates {:default (fn [args] (print (args :content)))}
                   :files ["fixtures/files/index.html"]
                   :posts [{:content "Hello world.\n"
-                           :frontmatter {:path "fixtures/files/_posts/post.md" :attachments [] :slug "post" :date "2020-01-01"}}]})
+                           :frontmatter {:path "fixtures/files/_posts/post.md" :attachments [] :slug "post" :date "2020-01-01" :permalink "post.html"}}]})
   (defer (rimraf "tmp")
     (renderer/render site-data)
-    (is (= ["index.html" (tuple ;(os/dir "tmp"))]))))
+    (is (== ["index.html" "post.html"] (sorted (os/dir "tmp"))))))
 
 
 (run-tests!)

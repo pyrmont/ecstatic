@@ -1,7 +1,6 @@
 (import temple)
 
 (import ./utilities :as util)
-(import ./grammar)
 
 
 (defn load-templates
@@ -14,7 +13,7 @@
       (let [template (slurp (string "./" dir "/" filename))
             basename (util/filename->basename filename)]
         (put template-fns (keyword basename) (temple/create template filename))))
-    (table/to-struct template-fns)))
+    template-fns))
 
 
 # TODO: Add tests
@@ -46,44 +45,34 @@
   [filepath]
   (case ((os/stat filepath) :mode)
     :file
-    []
+    @[]
 
     :directory
     (let [indices ["index.md" "index.markdown" "index.text" "index.htm" "index.html"]]
-      (tuple
-        ;(reduce (fn [result filename]
-                   (if (nil? (find (fn [x] (= filename x)) indices))
-                     (array/push result filename)
-                     result))
-                @[]
-                (os/dir filepath))))))
-
-
-(defn combine-metadata
-  ```
-  Combine the metadata from the filename and from the contents
-  ```
-  [from-filename from-contents]
-  (if (nil? from-contents)
-    from-filename
-    (table/to-struct (merge from-filename from-contents))))
+      (reduce (fn [result filename]
+                (if (nil? (find (fn [x] (= filename x)) indices))
+                  (array/push result filename)
+                  result))
+             @[]
+             (os/dir filepath)))))
 
 
 (defn load-posts
   ```
   Load the posts
   ```
-  [dir]
-  (tuple
-    ;(map (fn [filename]
-            (let [filepath      (util/add-to-path dir filename)
-                  post-path     (post-path filepath)
-                  post-data     (util/extract-data (slurp post-path))
-                  basename      (util/filename->basename filename)
-                  file-metadata (table :path post-path :attachments (load-attachments filepath) ;(peg/match grammar/post-basename basename))
-                  frontmatter   (combine-metadata file-metadata (post-data :frontmatter))]
-              {:frontmatter frontmatter :content (post-data :content)}))
-          (os/dir dir))))
+  [dir post-permalink-fn]
+  (map (fn [filename]
+         (let [filepath      (util/add-to-path dir filename)
+               post-path     (post-path filepath)
+               post-data     (util/contents->data (slurp filepath) filepath)
+               basename      (util/filename->basename filename)
+               metadata      (merge (util/basename->data basename filepath) (or (post-data :frontmatter) {}))
+               permalink     (post-permalink-fn metadata)
+               attachments   (load-attachments filepath)
+               frontmatter   (merge metadata {:path post-path :permalink permalink :attachments attachments})]
+           {:frontmatter frontmatter :content (post-data :content)}))
+       (os/dir dir)))
 
 
 (defn load-files
@@ -103,7 +92,7 @@
 
           :file
           (array/push files filepath))))
-    (tuple ;files)))
+    files))
 
 
 (comment
