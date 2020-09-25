@@ -21,6 +21,14 @@
     result))
 
 
+# TODO: Add tests
+(defn contains?
+  [needle haystack]
+  (cond
+    (indexed? haystack)
+    (not (nil? (find (fn [x] (= needle x)) haystack)))))
+
+
 (defn contents->data
   ```
   Convert contents to structured data
