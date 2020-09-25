@@ -11,6 +11,29 @@
       (string path "/" file))))
 
 
+# TODO: Add tests
+(defn basename->data
+  [basename &opt where]
+  (let [location (if (nil? where) "" (string where " "))
+        data     (peg/match grammar/post-basename basename)
+        result   (if (nil? data) nil (array/pop data))]
+    (assert (and (not (nil? result)) (not (empty? result))) (string "Error: The basename " basename "contains no data"))
+    result))
+
+
+(defn contents->data
+  ```
+  Convert contents to structured data
+  ```
+  [contents &opt where]
+  (let [location (if (nil? where) "" (string where " "))
+        data     (peg/match grammar/page contents)
+        result   (if (nil? data) nil (array/pop data))]
+    (assert (and (not (nil? result)) (not (empty? result))) (string "Error: The file " location "contains no data"))
+    result))
+
+
+# TODO: Add tests
 (defn copy-file
   [source dest]
   (spit dest (slurp source)))
@@ -26,18 +49,10 @@
       (add-to-path output-dir))))
 
 
-(defn extract-data
-  ```
-  Extract the frontmatter and content from a string, `s`
-  ```
-  [s &opt where]
-  (let [location (if (nil? where) "" (string where " "))
-        data (peg/match grammar/page s)]
-    (assert (not (empty? data)) (string "Error: The file " location "contains no data"))
-    (struct ;data)))
-
-
 (defn filename->basename
+  ```
+  Convert a filename to a basename
+  ```
   [filename]
   (let [pieces (string/split "." filename)]
     (if (one? (length pieces))
@@ -47,43 +62,42 @@
          (string/join pieces ".")))))
 
 
-(defn- has-extension?*
-  [candidates ext]
-  (if (= (last candidates) ext)
-    true
-    (if (one? (length candidates))
-      false
-      (do
-        (array/pop candidates)
-        (has-extension?* candidates ext)))))
-
-
 (defn has-extension?
-  [ext filename]
-  (let [pieces (string/split "." filename)]
-    (if (one? (length pieces))
-      false
-      (if (string? ext)
-        (= ext (last pieces))
-        (has-extension?* (if (array? ext) ext (array ;ext))
-                         (last pieces))))))
+  ```
+  Check whether `filename` ends in `ext-or-exts`
+  ```
+  [ext-or-exts filename]
+  (if (string? ext-or-exts)
+    (string/has-suffix? (string "." ext-or-exts) filename)
+    (not (not (some (fn [ext] (string/has-suffix? (string "." ext) filename)) ext-or-exts)))))
 
 
 (defn has-frontmatter?
-  [filepath]
-  (let [file (file/open filepath)
-        buff @""]
-    (defer (file/close file)
-      (file/read file 4 buff)
-      (if (not (= "---\n" (string buff)))
-        false
-        (do
-          (buffer/clear buff)
-          (while (file/read file :line buff)
-            (if (= "---\n" (string buff))
-               (break)
-               (buffer/clear buff)))
-          (= "---\n" (string buff)))))))
+  ```
+  Check whether `source` has frontmatter
+
+  The type of `source` can be either a string or an open file descriptor. If
+  it's the latter, the function will close the descriptor before returning.
+  ```
+  [source]
+  (case (type source)
+    :string
+    (not (nil? (peg/match grammar/frontmatter source)))
+
+    :core/file
+    (let [buff @""]
+      (defer (file/close source)
+        (file/read source 4 buff)
+        (when (not (= "---\n" (string buff)))
+          (break false))
+        (buffer/clear buff)
+        (while (file/read source :line buff)
+          (if (= "---\n" (string buff))
+             (break))
+          (buffer/clear buff))
+        (= "---\n" (string buff))))
+
+    (error "invalid source")))
 
 
 # TODO: Add tests
@@ -99,6 +113,9 @@
 
 
 (defn parent-path
+  ```
+  Return the path to the parent directory of the file at `filepath`
+  ```
   [filepath]
   (let [pieces (string/split "/" filepath)]
     (if (one? (length pieces))

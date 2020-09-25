@@ -2,26 +2,26 @@
 (import ../src/ecstatic/utilities :as util)
 
 
-(deftest extract-data-with-frontmatter-and-content
+(deftest contents->data-with-frontmatter-and-content
   (def expected {:frontmatter {:foo "bar"} :content "Hello world"})
-  (is (= expected (util/extract-data "---\nfoo: bar\n---\nHello world"))))
+  (is (= expected (util/contents->data "---\nfoo: bar\n---\nHello world"))))
 
 
-(deftest extract-data-with-empty-string
+(deftest contents->data-with-empty-string
   (def message "Error: The file contains no data")
-  (is (thrown? message (util/extract-data ""))))
+  (is (thrown? message (util/contents->data ""))))
 
 
-(deftest extract-data-with-empty-string-and-location
+(deftest contents->data-with-empty-string-and-location
   (def message "Error: The file foo.bar contains no data")
-  (is (thrown? message (util/extract-data "" "foo.bar"))))
+  (is (thrown? message (util/contents->data "" "foo.bar"))))
 
 
-(deftest filename-to-basename-with-one-fullstop
+(deftest filename->basename-with-one-fullstop
   (is (= "foo" (util/filename->basename "foo.bar"))))
 
 
-(deftest filename-to-basename-with-two-fullstops
+(deftest filename->basename-with-two-fullstops
   (is (= "foo.bar" (util/filename->basename "foo.bar.ext"))))
 
 
@@ -41,12 +41,20 @@
   (is (= false (util/has-extension? ["not-ext" "other-not-ext"] "foo.bar.ext"))))
 
 
-(deftest has-frontmatter-with-file-with-no-frontmatter
-  (is (= false (util/has-frontmatter? "fixtures/files/index.html"))))
+(deftest has-frontmatter?-with-string-with-no-frontmatter
+  (is (= false (util/has-frontmatter? ""))))
 
 
-(deftest has-frontmatter-with-file-with-frontmatter
-  (is (= true (util/has-frontmatter? "fixtures/posts/post.md"))))
+(deftest has-frontmatter?-with-string-with-frontmatter
+  (is (= true (util/has-frontmatter? "---\n---\n"))))
+
+
+(deftest has-frontmatter?-with-file-with-no-frontmatter
+  (is (= false (util/has-frontmatter? (file/open "fixtures/files/index.html")))))
+
+
+(deftest has-frontmatter?-with-file-with-frontmatter
+  (is (= true (util/has-frontmatter? (file/open "fixtures/posts/post.md")))))
 
 
 (deftest parent-path-with-no-parent
