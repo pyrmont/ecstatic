@@ -144,9 +144,10 @@
   (when (not (nil? (get-in site-data [:archives :months])))
     (let [title-fn       (fn [archive item]
                            (let [[year month-num] (string/split "/" item)
-                                 month (["January" "February" "March" "April"
-                                         "May" "June" "July" "August"
-                                         "September" "October" "November" "December"] (scan-number month-num))]
+                                 month (case (scan-number month-num)
+                                         1 "January" 2 "February" 3 "March" 4 "April"
+                                         5 "May" 6 "June" 7 "July" 8 "August"
+                                         9 "September" 10 "October" 11 "November" 12 "December" (error "invalid month"))]
                              (string archive " | " month " " year)))
           default-config @{:layout "archives"
                            :prefix "archives"
