@@ -108,8 +108,8 @@
                             {:content     ""
                              :frontmatter {:layout    (config :layout)
                                            :posts     posts
-                                           :permalink ((config :permalink-fn) (config :prefix) (string key))
-                                           :title     (string (config :title) " " key)}}))
+                                           :permalink ((config :permalink-fn) (config :prefix) key)
+                                           :title     ((config :title-fn) (config :title) key)}}))
               @[]
               (pairs archive)))))
 
@@ -126,6 +126,7 @@
     (let [default-config @{:layout "archives"
                            :prefix "archives"
                            :title "Yearly Archives"
+                           :title-fn (fn [archive item] (string archive " | " item))
                            :permalink-fn (site-data :page-permalink)}
           user-config    (get-in site-data [:archives :years])
           config         (if (dictionary? user-config) (merge default-config user-config) default-config)]
@@ -141,9 +142,16 @@
   ```
   [site-data]
   (when (not (nil? (get-in site-data [:archives :months])))
-    (let [default-config @{:layout "archives"
+    (let [title-fn       (fn [archive item]
+                           (let [[year month-num] (string/split "/" item)
+                                 month (["January" "February" "March" "April"
+                                         "May" "June" "July" "August"
+                                         "September" "October" "November" "December"] (scan-number month-num))]
+                             (string archive " | " month " " year)))
+          default-config @{:layout "archives"
                            :prefix "archives"
                            :title "Monthly Archives"
+                           :title-fn title-fn
                            :permalink-fn (site-data :page-permalink)}
           user-config    (get-in site-data [:archives :months])
           config         (if (dictionary? user-config) (merge default-config user-config) default-config)]
@@ -162,6 +170,7 @@
     (let [default-config @{:layout "archives"
                            :prefix "archives"
                            :title "Tag Archives"
+                           :title-fn (fn [archive item] (string archive " | " item))
                            :permalink-fn (site-data :page-permalink)}
           user-config    (get-in site-data [:archives :tags])
           config         (if (dictionary? user-config) (merge default-config user-config) default-config)]

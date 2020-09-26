@@ -80,7 +80,7 @@
   (def site-data {:pages @[]})
   (def post @{:content "Hello world\n" :frontmatter {:date {:year 2020} :title "Foo"}})
   (def archives {:years {:2020 @[post]}})
-  (def config {:layout "archives" :prefix "years" :title "Yearly Archives" :permalink-fn (fn [prefix slug] (string "/" prefix "/" slug "/index.html"))})
+  (def config {:layout "archives" :prefix "years" :title "Yearly Archives" :title-fn (fn [a b] (string a " " b)) :permalink-fn (fn [prefix slug] (string "/" prefix "/" slug "/index.html"))})
   (def archiver-fn (generator/make-archiver [:years] config))
   (def actual (archiver-fn archives site-data))
   (def expect @[{:content "" :frontmatter {:layout "archives" :permalink "/years/2020/index.html" :title "Yearly Archives 2020" :posts @[post]}}])
@@ -134,7 +134,7 @@
   (def post @{:content "Hello world\n" :frontmatter {:date {:year 2020} :title "Foo"}})
   (def site-data {:archives archives :pages @[] :page-permalink (fn [prefix slug] (string "/" prefix "/" slug "/index.html"))})
   (def actual (generator/generate-archives @[post] site-data))
-  (def expect @[{:content "" :frontmatter {:layout "archives" :permalink "/archives/2020/index.html" :title "Yearly Archives 2020" :posts @[post]}}])
+  (def expect @[{:content "" :frontmatter {:layout "archives" :permalink "/archives/2020/index.html" :title "Yearly Archives | 2020" :posts @[post]}}])
   (is (deep= expect actual)))
 
 
