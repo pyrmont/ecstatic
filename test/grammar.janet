@@ -54,6 +54,13 @@
   (is (= expected (first actual))))
 
 
+(deftest frontmatter-with-collection-of-bare-items
+  (def expected {:tags ["foo" "bar"]})
+  (def actual (peg/match grammar/frontmatter "---\ntags: [foo, bar]\n---\n"))
+  (is (one? (length actual)))
+  (is (= expected (first actual))))
+
+
 (deftest page-with-no-frontmatter
   (def expected [{:content "Hello world"}])
   (is (== expected (peg/match grammar/page "Hello world"))))

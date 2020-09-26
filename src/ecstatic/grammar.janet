@@ -62,21 +62,25 @@
     :frontmatter (cmt (* "---" :nl (any (* :variable :nl)) "---" :nl) ,struct)
     :variable (* :key ":" :space :value)
     :key (/ (capture (* :a (any (+ "_" :w)))) ,keyword)
-    :value (+ :collection :scalar)
+    :value (+ :collection :scalar :bare-value)
 
     # Scalars
-    :scalar (+ :datetime :number :boolean :string :bare)
+    :scalar (+ :datetime :number :boolean :string)
     :number (/ (capture (* :d+ (? (* "." :d*)))) ,scan-number)
     :boolean (/ (capture (+ "true" "false")) ,eval-string)
     :string (+ :single-string :double-string)
     :single-string (* "'" (capture (any (if-not "'" 1))) "'")
     :double-string (* "\"" (capture (any (if-not "\"" 1))) "\"")
-    :bare (capture (some (if-not (set "]}\n") 1)))
+
+    # Bare values
+    :bare-value (capture (some (if-not (set "\n") 1)))
+    :bare-item (capture (some (if-not (set ",]}\n") 1)))
 
     # Collections
     :collection (+ :map :sequence)
-    :map (cmt (* "{" :key ":" :s* :value "}") ,struct)
-    :sequence (cmt (* "[" :value :s* (any (* "," :s* :value)) "]") ,tuple)})
+    :item (+ :collection :scalar :bare-item)
+    :map (cmt (* "{" :key ":" :s* :item "}") ,struct)
+    :sequence (cmt (* "[" :s* :item :s* (any (* "," :s* :item :s*)) "]") ,tuple)})
 
 
 (def frontmatter
