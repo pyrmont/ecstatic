@@ -58,7 +58,7 @@
     :nl "\n"
     :space (some (set " \t\0\f"))
 
-    # Front matter
+    # Frontmatter
     :frontmatter (cmt (* "---" :nl (any (* :variable :nl)) "---" :nl) ,struct)
     :variable (* :key ":" :space :value)
     :key (/ (capture (* :a (any (+ "_" :w)))) ,keyword)
@@ -72,7 +72,7 @@
     :single-string (* "'" (capture (any (if-not "'" 1))) "'")
     :double-string (* "\"" (capture (any (if-not "\"" 1))) "\"")
 
-    # Bare values
+    # Bares
     :bare-value (capture (some (if-not (set "\n") 1)))
     :bare-item (capture (some (if-not (set ",]}\n") 1)))
 
