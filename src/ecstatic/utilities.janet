@@ -57,6 +57,12 @@
       (add-to-path output-dir))))
 
 
+# TODO: Add tests
+(defn dir-exists?
+  [dir]
+  (= :directory (os/stat dir :mode)))
+
+
 (defn filename->basename
   ```
   Convert a filename to a basename

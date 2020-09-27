@@ -107,9 +107,10 @@
   ```
   [site-data]
   (let [output-dir (site-data :output-dir)
+        pages      (or (site-data :pages) [])
         files      (or (site-data :files) [])
         posts      (or (site-data :posts) [])
-        pages      (or (site-data :pages) [])]
+        drafts     (or (site-data :drafts) [])]
     (case (os/stat output-dir :mode)
       nil
       (util/mkpath output-dir)
@@ -122,7 +123,9 @@
       (error "output directory is a file"))
     (each file files
       (render-file file site-data))
+    (each page pages
+      (render-page page site-data))
     (each post posts
       (render-post post site-data))
-    (each page pages
-      (render-page page site-data))))
+    (each draft drafts
+      (render-post draft site-data))))
