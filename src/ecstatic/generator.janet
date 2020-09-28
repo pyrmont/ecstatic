@@ -101,7 +101,7 @@
   ```
   [key config]
   (fn archiver [archives site-data]
-    (let [archive (get-in archives key)]
+    (when-let [archive (get-in archives key)]
       (assert (dictionary? archive) "archives must be a dictionary")
       (reduce (fn [pages [key posts]]
                 (array/push pages
@@ -210,6 +210,7 @@
       (each selector selectors
         (selector post archives)))
    (reduce (fn [pages archiver]
-             (array/concat pages (archiver archives site-data)))
+             (when-let [archive-pages (archiver archives site-data)]
+               (array/concat pages archive-pages)))
            @[]
            archivers)))

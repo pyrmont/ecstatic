@@ -53,12 +53,17 @@
   (let [destination (util/destination filepath (site-data :input-dir) (site-data :output-dir))
         parent-path (util/parent-path destination)]
     (util/mkpath parent-path)
-    (if (util/has-frontmatter? (file/open filepath))
-      (let [file-data (util/contents->data (slurp filepath) filepath)
-            render-fn (temple/create (file-data :content))
-            output    (render-data file-data site-data render-fn)]
-        (spit destination output))
-      (util/copy-file filepath destination))))
+    (if (not (util/has-frontmatter? (file/open filepath)))
+      (util/copy-file filepath destination)
+      (let [file-data   (util/contents->data (slurp filepath) filepath)
+            frontmatter (file-data :frontmatter)
+            content     (render-content (file-data :content) {:frontmatter frontmatter :site site-data})
+            layout      (-?> (frontmatter :layout) keyword)]
+        (if (nil? layout)
+          (spit destination content)
+          (let [render-fn (-> (site-data :templates) (get layout))
+                output    (render-data {:content content :frontmatter frontmatter} site-data render-fn filepath)]
+            (spit destination output)))))))
 
 
 (defn render-page
@@ -71,7 +76,7 @@
         destination (util/destination (frontmatter :permalink) "" (site-data :output-dir))
         layout      (or (-?> (frontmatter :layout) keyword) (site-data :default-layout))
         render-fn   (-> (site-data :templates) (get layout))
-        output      (render-data {:content content :frontmatter frontmatter} site-data render-fn)]
+        output      (render-data {:content content :frontmatter frontmatter} site-data render-fn (frontmatter :path))]
     (util/mkpath (util/parent-path destination))
     (spit destination output)))
 

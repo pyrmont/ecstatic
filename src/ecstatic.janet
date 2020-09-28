@@ -44,7 +44,7 @@
 
 (defn- add-archives
   [site-data]
-  (let [archive-pages (generator/generate-archives (site-data :posts) site-data)]
+  (when-let [archive-pages (generator/generate-archives (site-data :posts) site-data)]
     (array/concat (site-data :pages) archive-pages)
     site-data))
 
