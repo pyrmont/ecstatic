@@ -5,7 +5,8 @@
   :license "MIT"
   :url "https://github.com/pyrmont/ecstatic"
   :repo "git+https://github.com/pyrmont/ecstatic"
-  :dependencies ["https://github.com/pyrmont/markable"
+  :dependencies ["https://github.com/janet-lang/circlet"
+                 "https://github.com/pyrmont/markable"
                  "https://git.sr.ht/~bakpakin/temple"
                  "https://github.com/pyrmont/testament"])
 
