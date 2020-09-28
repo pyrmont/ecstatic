@@ -82,16 +82,16 @@
   [dir]
   (let [files @[]]
     (each filename (os/dir dir)
-      (let [filepath (string dir "/" filename)]
-        (case ((os/stat filepath) :mode)
-          :directory
-          (when (not (string/has-prefix? "_" filename))
+      (when (not (string/has-prefix? "_" filename))
+        (let [filepath (string dir "/" filename)]
+          (case ((os/stat filepath) :mode)
+            :directory
             (let [child-files (load-files filepath)]
               (when (not (empty? child-files))
-                (array/push files ;child-files))))
+                (array/push files ;child-files)))
 
-          :file
-          (array/push files filepath))))
+            :file
+            (array/push files filepath)))))
     files))
 
 
