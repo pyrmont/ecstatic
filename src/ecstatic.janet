@@ -5,6 +5,7 @@
 ## by Michael Camilleri
 ## 14 September 2020
 
+(import uv)
 
 (import ./ecstatic/builder :as builder)
 (import ./ecstatic/server :as server)
@@ -40,11 +41,24 @@
                              (string "/drafts/" slug "/index.html")))})
 
 
+
+(defn watcher
+  [command]
+  (fn [parent]
+    (uv/enter-loop
+      (let [callback (fn [handle path event]
+                       (when (not (string/has-prefix? (constants :output-dir) path))
+                         (os/execute [command "build"] :p)))
+            fiber    (fiber/new (fn [&]) :yi)
+            handle   (uv/fs-event/new fiber)]
+        (uv/fs-event/start handle callback "." 0)))))
+
 (defn main
   ```
   The main function
   ```
   [& args]
+
   (when (= 1 (length args))
     (os/exit 1))
 
@@ -53,4 +67,6 @@
     (builder/build constants default-config)
 
     "serve"
-    (server/serve (constants :output-dir))))
+    (do
+      (thread/new (watcher (in args 0)))
+      (server/serve (constants :output-dir)))))
