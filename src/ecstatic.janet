@@ -41,7 +41,6 @@
                              (string "/drafts/" slug "/index.html")))})
 
 
-
 (defn watcher
   [command]
   (fn [parent]
@@ -52,6 +51,7 @@
             fiber    (fiber/new (fn [&]) :yi)
             handle   (uv/fs-event/new fiber)]
         (uv/fs-event/start handle callback "." 0)))))
+
 
 (defn main
   ```
