@@ -12,7 +12,7 @@
 
 
 (def- constants
-  {:config-file "_config.jdn"
+  {:config-file "_config.janet"
    :layout-dir  "_layouts"
    :posts-dir   "_posts"
    :drafts-dir  "_drafts"
