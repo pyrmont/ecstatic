@@ -58,6 +58,10 @@ static int watchful_monitor_gc(void *p, size_t size) {
 static int watchful_monitor_mark(void *p, size_t size) {
     (void) size;
     watchful_monitor_t *monitor = (watchful_monitor_t *)p;
+
+    Janet wrapped_path = janet_wrap_string(monitor->path);
+    janet_mark(wrapped_path);
+
     for (size_t i = 0; i < (size_t)monitor->excludes.len; i++) {
         Janet item = monitor->excludes.items[i];
         janet_mark(item);
