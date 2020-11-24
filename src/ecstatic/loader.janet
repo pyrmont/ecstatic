@@ -1,5 +1,4 @@
-(import temple)
-
+(import ../temple)
 (import ./utilities :as util)
 
 
@@ -8,11 +7,14 @@
   Load the templates
   ```
   [dir]
+  (temple/add-loader)
   (let [template-fns @{}]
     (each filename (os/dir dir)
-      (let [template (slurp (string "./" dir "/" filename))
-            basename (util/filename->basename filename)]
-        (put template-fns (keyword basename) (temple/create template filename))))
+      (let [basename      (util/filename->basename filename)
+            render-fns    (require (string dir "/" basename))
+            template-name (keyword basename)
+            template-fn   (get-in render-fns ['render-dict :value])]
+        (put template-fns template-name template-fn)))
     template-fns))
 
 

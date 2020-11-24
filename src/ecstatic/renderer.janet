@@ -1,19 +1,7 @@
-(import temple)
 (import markable)
 
+(import ../temple)
 (import ./utilities :as util)
-
-
-(defn render-content
-  ```
-  Render the content
-  ```
-  [content args &opt where]
-  (let [result    @""
-        render-fn (temple/create content where)]
-    (with-dyns [:out result]
-      (render-fn args))
-    result))
 
 
 # TODO: Add tests
@@ -32,17 +20,8 @@
         frontmatter (data :frontmatter)
         args        {:content content :frontmatter frontmatter :site site-data}]
     (with-dyns [:out result]
-      (render-fn args))
-    (let [result-string (string result)]
-      (if (util/has-frontmatter? result-string)
-        (let [data        (util/contents->data result-string)
-              content     (data :content)
-              frontmatter (merge frontmatter (data :frontmatter))
-              layout      (or (-?> (frontmatter :layout) keyword) (site-data :default-layout))
-              render-fn   (-> (site-data :templates) (get layout))]
-          (assert render-fn (string "no render function found for layout " layout))
-          (render-data {:content content :frontmatter frontmatter} site-data render-fn))
-        result-string))))
+      (render-fn args)
+      result)))
 
 
 (defn render-file
@@ -53,17 +32,7 @@
   (let [destination (util/destination filepath (site-data :input-dir) (site-data :output-dir))
         parent-path (util/parent-path destination)]
     (util/mkpath parent-path)
-    (if (not (util/has-frontmatter? (file/open filepath)))
-      (util/copy-file filepath destination)
-      (let [file-data   (util/contents->data (slurp filepath) filepath)
-            frontmatter (file-data :frontmatter)
-            content     (render-content (file-data :content) {:frontmatter frontmatter :site site-data})
-            layout      (-?> (frontmatter :layout) keyword)]
-        (if (nil? layout)
-          (spit destination content)
-          (let [render-fn (-> (site-data :templates) (get layout))
-                output    (render-data {:content content :frontmatter frontmatter} site-data render-fn filepath)]
-            (spit destination output)))))))
+    (util/copy-file filepath destination)))
 
 
 (defn render-page

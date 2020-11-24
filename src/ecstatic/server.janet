@@ -23,9 +23,10 @@
   ```
   Run the development server
   ```
-  [output-dir]
+  [output-dir port ip-address]
   (circlet/server
     (-> (routes output-dir)
         circlet/router
         circlet/logger)
-    8000))
+    port
+    ip-address))

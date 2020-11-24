@@ -6,12 +6,43 @@
   :url "https://github.com/pyrmont/ecstatic"
   :repo "git+https://github.com/pyrmont/ecstatic"
   :dependencies ["https://github.com/janet-lang/circlet"
-                 {:repo "https://github.com/pyrmont/juv" :tag "9ce6699c805b1c3a97af0fef23e7453e7b57197a"}
                  "https://github.com/pyrmont/markable"
-                 "https://git.sr.ht/~bakpakin/temple"
                  "https://github.com/pyrmont/testament"])
 
 
 (declare-executable
   :name "ecstatic"
   :entry "src/ecstatic.janet")
+
+
+(def cflags
+  [])
+
+
+(def platform-cflags
+  (case (os/which)
+   :macos
+   ["-mmacosx-version-min=10.12" "-DMACOS=1" "-framework" "CoreServices" "-Wno-unused-parameter" "-Wno-unused-command-line-argument"]
+
+   :linux
+   ["-DLINUX=1" "-pthread" "-Wno-unused-parameter"]
+
+   ["-Wno-unused-parameter"]))
+
+
+(def lflags
+  [])
+
+
+(def platform-lflags
+  [])
+
+
+(declare-native
+  :name    "watchful"
+  :cflags  [;default-cflags ;cflags ;platform-cflags]
+  :lflags  [;default-lflags ;lflags ;platform-lflags]
+  :headers @["src/watchful.h"]
+  :source  @["src/watchful/fse.c"
+             "src/watchful/inotify.c"
+             "src/watchful.c"])

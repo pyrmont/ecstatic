@@ -5,10 +5,10 @@
 ## by Michael Camilleri
 ## 14 September 2020
 
-(import uv)
-
+(import ../build/watchful)
 (import ./ecstatic/builder :as builder)
 (import ./ecstatic/server :as server)
+(import ./temple)
 
 
 (def- constants
@@ -19,7 +19,7 @@
    :output-dir  "_site"})
 
 
-(def- default-config
+(def default-config
   {:input-dir            "."
    :output-dir           (constants :output-dir)
    :default-layout       :default
@@ -41,16 +41,26 @@
                              (string "/drafts/" slug "/index.html")))})
 
 
+(defn builder
+  [config]
+  (builder/build constants config))
+
+
 (defn watcher
-  [command]
-  (fn [parent]
-    (uv/enter-loop
-      (let [callback (fn [handle path event]
-                       (when (not (string/has-prefix? (constants :output-dir) path))
-                         (os/execute [command "build"] :p)))
-            fiber    (fiber/new (fn [&]) :yi)
-            handle   (uv/fs-event/new fiber)]
-        (uv/fs-event/start handle callback "." 0)))))
+  [config]
+  (defn worker [parent]
+    (temple/add-loader)
+    (def monitor (watchful/create (config :input-dir) ["4913" "~"]))
+    (defn cb [path event-type] (builder/build constants config))
+    (watchful/watch monitor cb [:delay 0.5]))
+  (thread/new worker 10 :h))
+
+
+(defn server
+  [dir &opt port address]
+  (default port 8000)
+  (default address "127.0.0.1")
+  (server/serve dir port address))
 
 
 (defn main
@@ -67,6 +77,7 @@
     (builder/build constants default-config)
 
     "serve"
-    (do
-      (thread/new (watcher (in args 0)))
-      (server/serve (constants :output-dir)))))
+    (let [address (or (args 2) "127.0.0.1")
+          port    (or (-?> (args 3) scan-number) 8000)]
+      (watcher default-config)
+      (server (default-config :output-dir) port address))))
