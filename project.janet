@@ -10,11 +10,6 @@
                  "https://github.com/pyrmont/testament"])
 
 
-(declare-executable
-  :name "ecstatic"
-  :entry "src/ecstatic.janet")
-
-
 (def cflags
   [])
 
@@ -46,3 +41,8 @@
   :source  @["src/watchful/fse.c"
              "src/watchful/inotify.c"
              "src/watchful.c"])
+
+
+(declare-executable
+  :name "ecstatic"
+  :entry "src/ecstatic.janet")
