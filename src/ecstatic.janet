@@ -49,7 +49,6 @@
 (defn watcher
   [config]
   (defn worker [parent]
-    (temple/add-loader)
     (def monitor (watchful/create (config :input-dir) ["4913" "~"]))
     (defn cb [path event-type] (builder/build constants config))
     (watchful/watch monitor cb [:delay 0.5]))
