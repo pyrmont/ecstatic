@@ -53,10 +53,15 @@ typedef struct watchful_backend_t {
   int (*teardown)(struct watchful_stream_t *stream);
 } watchful_backend_t;
 
+typedef struct watchful_excludes_t {
+  char **paths;
+  size_t len;
+} watchful_excludes_t;
+
 typedef struct watchful_monitor_t {
   struct watchful_backend_t *backend;
   const uint8_t *path;
-  JanetView excludes;
+  watchful_excludes_t *excludes;
 } watchful_monitor_t;
 
 typedef struct watchful_stream_t {
@@ -103,6 +108,6 @@ extern watchful_backend_t watchful_inotify;
 /* Utility Functions */
 char *watchful_clone_string(char *src);
 char *watchful_extend_path(char *path, char *name, int is_dir);
-int watchful_is_excluded(char *path, JanetView excludes);
+int watchful_is_excluded(char *path, watchful_excludes_t *excludes);
 
 #endif

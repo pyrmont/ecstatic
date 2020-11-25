@@ -25,13 +25,13 @@ char *watchful_extend_path(char *path, char *name, int is_dir) {
     return new_path;
 }
 
-int watchful_is_excluded(char *path, JanetView excludes) {
-    if (excludes.len == 0) return 0;
+int watchful_is_excluded(char *path, watchful_excludes_t *excludes) {
+    if (excludes->len == 0) return 0;
     int path_len = strlen(path);
-    for (size_t i = 0; i < (size_t)excludes.len; i++) {
-        const uint8_t *exclude = janet_getstring(excludes.items, i);
-        int exclude_len = strlen((char *)exclude);
-        if (exclude_len > path_len) continue;
+    for (size_t i = 0; i < (size_t)excludes->len; i++) {
+        char *exclude = excludes->paths[i];
+        int exclude_len = strlen(exclude);
+        if (exclude_len > path_len) continue; /* TODO: Do wildcards screw this up? */
         for (int p = path_len - 1, e = exclude_len - 1; p >= 0 && e >= 0; p--, e--) {
             if (path[p] != exclude[e]) break;
             if (e == 0 && p == 0) return 1;
@@ -62,10 +62,10 @@ static int watchful_monitor_mark(void *p, size_t size) {
     Janet wrapped_path = janet_wrap_string(monitor->path);
     janet_mark(wrapped_path);
 
-    for (size_t i = 0; i < (size_t)monitor->excludes.len; i++) {
-        Janet item = monitor->excludes.items[i];
-        janet_mark(item);
-    }
+    /* for (size_t i = 0; i < (size_t)monitor->excludes->len; i++) { */
+    /*     Janet item = monitor->excludes->items[i]; */
+    /*     janet_mark(item); */
+    /* } */
     return 0;
 }
 
@@ -79,6 +79,36 @@ static const JanetAbstractType watchful_monitor_type = {
 };
 
 /* C Functions */
+
+static int watchful_copy_excludes(watchful_monitor_t *wm, JanetView exclude_paths) {
+    watchful_excludes_t *excludes = (watchful_excludes_t *)malloc(sizeof(watchful_excludes_t));
+    if (excludes == NULL) return 1;
+    excludes->paths = NULL;
+    excludes->len = 0;
+    if (exclude_paths.len == 0) return 0;
+
+    for (size_t i = 0; i < (size_t)exclude_paths.len; i++) {
+        if (i == 0) {
+            excludes->paths = (char **)malloc(sizeof(char *));
+            if (excludes->paths == NULL) return 1;
+        } else {
+            char **new_paths = (char **)realloc(excludes->paths, sizeof(*excludes->paths) * (i + 1));
+            if (new_paths == NULL) return 1;
+            excludes->paths = new_paths;
+        }
+        char *exclude_path = (char *)janet_getstring(exclude_paths.items, i);
+        if (exclude_path[0] == '/') {
+            excludes->paths[i] = watchful_clone_string(exclude_path);
+        } else {
+            excludes->paths[i] = watchful_extend_path((char *)wm->path, exclude_path, 0);
+        }
+        if (excludes->paths[i] == NULL) return 1;
+        excludes->len = i + 1;
+    }
+
+    wm->excludes = excludes;
+    return 0;
+}
 
 static int watchful_copy_path(watchful_monitor_t *wm, const uint8_t *path, size_t max_len) {
     size_t path_len = strlen((char *)path);
@@ -133,15 +163,14 @@ static Janet cfun_create(int32_t argc, Janet *argv) {
 
     const uint8_t *path = janet_getstring(argv, 0);
 
-    JanetView excludes;
+    JanetView exclude_paths;
     if (argc >= 2) {
-        excludes = janet_getindexed(argv, 1);
+        exclude_paths = janet_getindexed(argv, 1);
     } else {
-        excludes.items = NULL;
-        excludes.len = 0;
+        exclude_paths.items = NULL;
+        exclude_paths.len = 0;
     }
 
-    /* Need to know backend first */
     watchful_backend_t *backend = NULL;
     if (argc == 3) {
         const uint8_t *choice = janet_getkeyword(argv, 2);
@@ -163,10 +192,14 @@ static Janet cfun_create(int32_t argc, Janet *argv) {
     watchful_monitor_t *wm = (watchful_monitor_t *)janet_abstract(&watchful_monitor_type, sizeof(watchful_monitor_t));
     wm->backend = backend;
     wm->path = NULL;
-    wm->excludes = excludes;
+    wm->excludes = NULL;
 
-    int error = watchful_copy_path(wm, path, 1024);
+    int error = 0;
+    error = watchful_copy_path(wm, path, 1024);
     if (error) janet_panic("path too long");
+
+    error = watchful_copy_excludes(wm, exclude_paths);
+    if (error) janet_panic("cannot copy excluded paths");
 
     return janet_wrap_abstract(wm);
 }
