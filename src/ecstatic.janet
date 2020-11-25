@@ -67,16 +67,17 @@
   The main function
   ```
   [& args]
-
   (when (= 1 (length args))
     (os/exit 1))
+  (let [filename    (constants :config-file)
+        user-config (if (os/stat filename) (slurp filename) {})
+        config      (merge default-config user-config)]
+    (case (in args 1)
+      "build"
+      (builder config)
 
-  (case (in args 1)
-    "build"
-    (builder/build constants default-config)
-
-    "serve"
-    (let [address (or (args 2) "127.0.0.1")
-          port    (or (-?> (args 3) scan-number) 8000)]
-      (watcher default-config)
-      (server (default-config :output-dir) port address))))
+      "serve"
+      (let [address (or (get args 2) "127.0.0.1")
+            port    (or (-?> (get args 3) scan-number) 8000)]
+        (watcher config)
+        (server (config :output-dir) port address)))))
