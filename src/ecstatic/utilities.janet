@@ -17,7 +17,9 @@
   (let [location (if (nil? where) "" (string where " "))
         data     (peg/match grammar/post-basename basename)
         result   (if (nil? data) nil (array/pop data))]
-    (assert (and (not (nil? result)) (not (empty? result))) (string "Error: The basename " basename "contains no data"))
+    (assert (and (not (nil? result))
+                 (not (empty? result)))
+            (string "the basename " basename "contains no data"))
     result))
 
 
@@ -37,7 +39,9 @@
   (let [location (if (nil? where) "" (string where " "))
         data     (peg/match grammar/page contents)
         result   (if (nil? data) nil (array/pop data))]
-    (assert (and (not (nil? result)) (not (empty? result))) (string "Error: The file " location "contains no data"))
+    (assert (and (not (nil? result))
+                 (not (empty? result)))
+            (string "the file " location "contains no data"))
     result))
 
 

@@ -8,12 +8,12 @@
 
 
 (deftest contents->data-with-empty-string
-  (def message "Error: The file contains no data")
+  (def message "the file contains no data")
   (is (thrown? message (util/contents->data ""))))
 
 
 (deftest contents->data-with-empty-string-and-location
-  (def message "Error: The file foo.bar contains no data")
+  (def message "the file foo.bar contains no data")
   (is (thrown? message (util/contents->data "" "foo.bar"))))
 
 
