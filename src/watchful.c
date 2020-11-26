@@ -27,16 +27,9 @@ char *watchful_extend_path(char *path, char *name, int is_dir) {
 
 int watchful_is_excluded(char *path, watchful_excludes_t *excludes) {
     if (excludes->len == 0) return 0;
-    int path_len = strlen(path);
     for (size_t i = 0; i < (size_t)excludes->len; i++) {
-        char *exclude = excludes->paths[i];
-        int exclude_len = strlen(exclude);
-        if (exclude_len > path_len) continue; /* TODO: Do wildcards screw this up? */
-        for (int p = path_len - 1, e = exclude_len - 1; p >= 0 && e >= 0; p--, e--) {
-            if (path[p] != exclude[e]) break;
-            if (e == 0 && p == 0) return 1;
-            if (e == 0 && exclude[e] != '/') return 1;
-        }
+        const char *exclude = (const char *)excludes->paths[i];
+        if (wildmatch(exclude, path, WM_WILDSTAR) == WM_MATCH) return 1;
     }
     return 0;
 }

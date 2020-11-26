@@ -12,6 +12,7 @@
 /* General */
 #include <string.h>
 #include <time.h>
+#include "watchful/wildmatch.h"
 
 /* POSIX */
 #include <pthread.h>

@@ -49,7 +49,7 @@
 (defn watcher
   [config]
   (defn worker [parent]
-    (def monitor (watchful/create (config :input-dir) ["4913" "~"]))
+    (def monitor (watchful/create (config :input-dir) ["**/4913" "**/~"]))
     (defn cb [path event-type] (builder/build constants config))
     (watchful/watch monitor cb [:delay 0.5]))
   (thread/new worker 10 :h))
