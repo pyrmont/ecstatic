@@ -235,6 +235,7 @@ static int teardown(watchful_stream_t *stream) {
     }
 
     free(stream->watches);
+    stream->watches = NULL;
 
     error = close(stream->fd);
     if (error) return 1;

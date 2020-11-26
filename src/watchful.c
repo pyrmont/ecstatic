@@ -43,6 +43,13 @@ static int watchful_monitor_gc(void *p, size_t size) {
         free((uint8_t *)monitor->path);
         monitor->path = NULL;
     }
+    if (monitor->excludes->len != 0) {
+        for (size_t i = 0; i < monitor->excludes->len; i++) {
+            free((char *)monitor->excludes->paths[i]);
+        }
+        free(monitor->excludes);
+        monitor->excludes = NULL;
+    }
     return 0;
 }
 
@@ -55,10 +62,6 @@ static int watchful_monitor_mark(void *p, size_t size) {
     Janet wrapped_path = janet_wrap_string(monitor->path);
     janet_mark(wrapped_path);
 
-    /* for (size_t i = 0; i < (size_t)monitor->excludes->len; i++) { */
-    /*     Janet item = monitor->excludes->items[i]; */
-    /*     janet_mark(item); */
-    /* } */
     return 0;
 }
 
