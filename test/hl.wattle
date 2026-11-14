@@ -1,0 +1,129 @@
+(import ../deps/gum/test :prefix "")
+
+(import ../lib/highlight)
+(import ../lib/hl/classes)
+(import ../lib/hl/engine)
+
+(import onig)
+
+; Scanners
+
+(defn- scan [patterns text pos]
+  (onig/scan (onig/scanner patterns) text pos))
+
+(deftest scanner
+  ; The match that starts earliest wins, and the earlier regex a tie.
+  (is (== [1 [[1 2]]] (scan ["c" "b" "bc"] "abc" 0)))
+  (is (== [1 [[1 2]]] (scan ["x" "b|bc" "bc"] "abc" 0)))
+  (is (nil? (scan ["x"] "abc" 0)))
+  ; A group that does not take part is nil. Positions are in bytes.
+  (is (== [0 [[1 4] nil [3 4] nil]] (scan ["é(x)?(b)|é(b)" "z"] "aébcb" 0)))
+  ; Named groups are numbered with the others.
+  (is (== [0 [[1 4] [2 3] [3 4]]] (scan ["a(?<n>b)(\\k<n>)"] "xabb" 0)))
+  ; \\G matches where the search starts.
+  (is (nil? (scan ["\\Gb"] "abb" 0)))
+  (is (== [0 [[1 2]]] (scan ["\\Gb"] "abb" 1))))
+
+(deftest scanner-reuses-results
+  ; A later search of the same text gives the same results as a new scanner.
+  (def s (onig/scanner ["(?<=b)c+" "a(x)?(b)" "\\Gc" "\\p{Greek}+"]))
+  (def text "abccc λλ")
+  (each pos [0 2 3 5 6 9]
+    (is (== (scan ["(?<=b)c+" "a(x)?(b)" "\\Gc" "\\p{Greek}+"] text pos)
+            (onig/scan s text pos))
+        (string pos))))
+
+(deftest scanner-errors
+  ; A regex that does not compile never matches.
+  (is (== "end pattern with unmatched parenthesis" (onig/error "(a")))
+  (is (nil? (onig/error "a(?<n>b)\\k<n>")))
+  (is (== [1 [[0 1]]] (scan ["(a" "a"] "a" 0))))
+
+; Classes
+
+(deftest class-of
+  (is (== "hl-keyword" (classes/class-of ["source.swift" "keyword.control.swift"])))
+  (is (== "hl-string" (classes/class-of ["source.swift" "string.quoted.double.swift"
+                                         "punctuation.definition.string.begin.swift"])))
+  (is (nil? (classes/class-of ["source.swift" "string.quoted.double.swift"
+                               "meta.embedded.line.swift"])))
+  (is (nil? (classes/class-of ["source.swift" "keywords.swift"])))
+  (is (== "hl-property" (classes/class-of ["source.json" "string.json" "support.type.property-name.json"
+                                           "punctuation.support.type.property-name.begin.json"])))
+  (is (== "hl-tag" (classes/class-of ["source.yaml" "string.unquoted.plain.out.yaml"
+                                      "entity.name.tag.yaml"])))
+  ; Operators are not keywords, and a shell command's arguments are plain.
+  (is (== "hl-operator" (classes/class-of ["source.js" "keyword.operator.arithmetic.js"])))
+  (is (nil? (classes/class-of ["source.shell" "string.unquoted.argument.shell"])))
+  (is (== "hl-prompt" (classes/class-of ["text.shell-session"
+                                         "punctuation.separator.prompt.shell-session"]))))
+
+; While rules
+
+(defn- tokens [g code]
+  (map (fn [line] (vec (map (fn [[s e scopes]] [s e (last scopes)]) line)))
+       (engine/tokenize g code)))
+
+(def- quote-grammar
+  (engine/load {"scopeName" "source.q"
+                "patterns" [{"begin" "^(>) " "while" "^(>) "
+                             "name" "markup.quote.q"
+                             "captures" {"1" {"name" "punctuation.q"}}
+                             "patterns" [{"match" "\\d+" "name" "constant.numeric.q"}]}]}))
+
+(deftest while-rule
+  ; The rule stays open while each line begins with its while regex, and
+  ; closes at the first line that does not. The while match is a token of
+  ; its own.
+  (is (== [[[0 1 "punctuation.q"] [1 2 "markup.quote.q"] [2 3 "constant.numeric.q"]]
+           [[0 1 "punctuation.q"] [1 2 "markup.quote.q"] [2 3 "markup.quote.q"]]
+           [[0 3 "source.q"]]]
+          (tokens quote-grammar "> 1\n> a\n2 b\n"))))
+
+(deftest while-rule-with-backreference
+  (def g (engine/load {"scopeName" "source.r"
+                       "patterns" [{"begin" "^(\\w+):" "while" "^\\1:"
+                                    "contentName" "meta.block.r"}]}))
+  ; The while regex is the begin's capture, and its match takes the rule's
+  ; content name, as in vscode-textmate.
+  (is (== [[[0 2 "source.r"] [2 3 "meta.block.r"]]
+           [[0 2 "meta.block.r"] [2 3 "meta.block.r"]]
+           [[0 2 "source.r"]]]
+          (tokens g "a:x\na:y\nbz\n"))))
+
+; Highlighting
+
+(def- test-grammar
+  (engine/load {"scopeName" "source.test"
+                "patterns" [{"match" "\\blet\\b" "name" "keyword.test"}
+                            {"match" "\\d+" "name" "constant.numeric.test"}
+                            {"match" "//.*" "name" "comment.line.test"}]}))
+
+(deftest lines
+  (is (== ["<span class=\"hl-keyword\">let</span> x = <span class=\"hl-number\">1</span>"
+           "<span class=\"hl-comment\">// &lt;b&gt;</span>"]
+          (highlight/lines test-grammar "let x = 1\n// <b>\n"))))
+
+(deftest lines-without-grammar
+  (is (== ["a &amp; b" "" "c"] (highlight/lines nil "a & b\n\nc"))))
+
+(deftest load-grammars
+  (def dir "tmp/test/grammars")
+  (os/mkdir "tmp/test")
+  (os/mkdir dir)
+  (spit (string dir "/a.json") (json/encode {"scopeName" "source.a"
+                                             "patterns" [{"include" "source.b"}]}))
+  (spit (string dir "/b.json") (json/encode {"scopeName" "source.b"
+                                             "patterns" [{"match" "x" "name" "keyword.b"}]}))
+  (spit (string dir "/notes.txt") "not a grammar")
+  (spit (string dir "/._a.json") "\0")
+  (def gs (highlight/load-grammars dir))
+  (is (== ["source.a" "source.b"] (sort (keys gs))))
+  (is (== ["<span class=\"hl-keyword\">x</span>y"] (highlight/lines (gs "source.a") "xy\n")))
+  (spit (string dir "/c.json") "[1]")
+  (is (== (string dir "/c.json: not a TextMate grammar")
+          (try (highlight/load-grammars dir) ([e] e))))
+  (each name (os/dir dir) (os/rm (string dir "/" name)))
+  (os/rmdir dir))
+
+(run-tests!)

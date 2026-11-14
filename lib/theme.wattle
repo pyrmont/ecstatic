@@ -1,0 +1,53 @@
+; A theme is the Wattle file `_ecstatic.wattle` in a site's source directory.
+; It is compiled when the site is built, in an environment of its own, so a
+; theme can import files beside it by relative path. It must define `build`,
+; and may define `config` and `permalink`.
+;
+; A theme cannot import Ecstatic's modules, since a built executable has no
+; module path, so the bindings of the modules in `exposed` are put into its
+; environment before it is compiled, with the same prefixes.
+
+(import cmark)
+(import ./date)
+(import ./feed)
+(import ./hiccup)
+(import ./highlight)
+(import ./markdown)
+(import ./paginate)
+
+(def- module-env (curenv))
+
+(def exposed
+  "The prefixes of the bindings that a theme can use."
+  ["cmark/" "date/" "feed/" "hiccup/" "highlight/" "markdown/" "paginate/"])
+
+(defn- theme-env []
+  (def env (make-env))
+  (each [k v] (pairs module-env)
+    (when (and (symbol? k) (find #(string/has-prefix? $ k) exposed))
+      (put! env k v)))
+  env)
+
+(def file-name
+  "The name of the theme file in a site's source directory."
+  "_ecstatic.wattle")
+
+(defn lookup
+  "Returns the value bound to sym in the theme environment env, or nil."
+  [env sym]
+  (get-in env [sym :value]))
+
+(defn load
+  """
+  Loads the theme file in the directory source and returns its environment.
+  Raises an error if the file does not exist or does not define `build` as a
+  function.
+  """
+  [source]
+  (def path (string source "/" file-name))
+  (unless (= :file (os/stat path :mode))
+    (errorf "cannot find %s" path))
+  (def env (dofile path :env (theme-env)))
+  (unless (function? (lookup env 'build))
+    (errorf "%s does not define build as a function" path))
+  env)

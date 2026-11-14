@@ -1,0 +1,47 @@
+; Git metadata for a site's source directory, read by running `git`. A
+; directory that is not in a repository, or a system without `git`, gives no
+; metadata rather than an error.
+
+(defn- run
+  """
+  Runs git with args in dir and returns its standard output as a string, or
+  nil if git cannot be run or fails.
+  """
+  [dir & args]
+  (def [ok? proc] (protect (os/spawn ["git" "-C" dir |args] :p
+                                     {:out :pipe :err :pipe})))
+  (when ok?
+    (def [out _] (ev/gather (:read (proc :out) :all) (:read (proc :err) :all)))
+    (def code (os/proc-wait proc))
+    (os/proc-close proc)
+    (when (zero? code)
+      (if out (string out) ""))))
+
+(defn revision
+  "Returns the commit hash of HEAD in the repository containing dir, or nil."
+  [dir]
+  (when-let [out (run dir "rev-parse" "HEAD")]
+    (def hash (string/trim out))
+    (unless (empty? hash) hash)))
+
+(defn modified-times
+  """
+  Returns a table of the files under dir that are in the history of the
+  repository containing dir, with paths relative to dir, and the commit time
+  of the most recent commit to change each one, in seconds since the epoch.
+  This is the time jekyll-last-modified-at gave. Returns an empty table if
+  there is no history. The history is read with one call to git.
+  """
+  [dir]
+  (def times !{})
+  (when-let [out (run dir "-c" "core.quotepath=off" "log" "--format=%x01%ct"
+                      "--name-only" "-z" "--relative" "--" ".")]
+    (each commit (string/split "\x01" out)
+      (unless (empty? commit)
+        (def nul (string/find "\x00" commit))
+        (def time (scan-number (string/slice commit 0 nul)))
+        (def files (string/slice commit (inc nul)))
+        (each path (string/split "\x00" (string/triml files "\n"))
+          (unless (or (empty? path) (get times path))
+            (put! times path time))))))
+  times)

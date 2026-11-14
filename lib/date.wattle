@@ -1,0 +1,174 @@
+; Dates are numbers of seconds since the Unix epoch. An offset is a number of
+; seconds east of UTC, as in +0900, which is 32400.
+
+(defn- offset-value [sign h & ms]
+  (* (if (= "-" sign) -1 1)
+     (+ (* 3600 h) (* 60 (or (first ms) 0)))))
+
+(def- offset-rule
+  `(+ (* "Z" (constant 0))
+      (/ (* (<- (set "+-")) (number (2 :d)) (? ":") (? (number (2 :d))))
+         ~offset-value)))
+
+(def- offset-grammar
+  (peg/compile `{:main (* ~offset-rule -1)}))
+
+(defn parse-offset
+  """
+  Returns the offset in seconds for s, an offset such as `+0900`, `+09:00`,
+  `-05` or `Z`. Raises an error if s is not an offset.
+  """
+  [s]
+  (or (first (peg/match offset-grammar s))
+      (errorf "invalid offset %s" s)))
+
+(def- date-grammar
+  (peg/compile
+    `{:d2 (number (between 1 2 :d))
+      :ymd (* (constant :year) (number (4 :d)) "-"
+              (constant :month) :d2 "-"
+              (constant :day) :d2)
+      :hms (* (constant :hours) :d2 ":"
+              (constant :minutes) (number (2 :d))
+              (? (* ":" (constant :seconds) (number (2 :d))
+                    (? (* "." (some :d))))))
+      :zone (* (constant :offset) ~offset-rule)
+      :main (* :ymd
+               (? (* (+ "T" "t" (some " ")) :hms (any " ") (? :zone)))
+               (any " ") -1)}))
+
+(defn parse
+  """
+  Returns the time of s, a date such as `2026-04-21`, `2026-04-21 12:53:37
+  +0900` or `2020-02-17T06:04:55.990-00:00`, in seconds since the epoch.
+  Fractions of a second are dropped. A date without an offset is read at
+  offset, in seconds, and a date without a time is midnight. Raises an error
+  if s is not a date.
+  """
+  [s offset]
+  (def caps (peg/match date-grammar s))
+  (unless caps
+    (errorf "invalid date %s" s))
+  (def d (table |caps))
+  (def {:keys [year month day hours minutes seconds]
+        :or {hours 0 minutes 0 seconds 0}} d)
+  (unless (and (<= 1 month 12) (<= 1 day 31) (< hours 24) (< minutes 60)
+               (< seconds 61))
+    (errorf "invalid date %s" s))
+  (def local (os/mktime {:year year :month (dec month) :month-day (dec day)
+                         :hours hours :minutes minutes :seconds seconds}))
+  (unless (= (dec day) (get (os/date local) :month-day))
+    (errorf "invalid date %s" s))
+  (- local (get d :offset offset)))
+
+(defn parts
+  """
+  Returns the parts of time, in seconds since the epoch, at offset, in seconds,
+  as a map with `:year`, `:month` (1 to 12), `:day` (1 to 31), `:hour`,
+  `:minute`, `:second`, `:week-day` (0 for Sunday) and `:year-day` (1 to 366).
+  """
+  [time offset]
+  (def d (os/date (math/floor (+ time offset))))
+  {:year (d :year)
+   :month (inc (d :month))
+   :day (inc (d :month-day))
+   :hour (d :hours)
+   :minute (d :minutes)
+   :second (d :seconds)
+   :week-day (d :week-day)
+   :year-day (inc (d :year-day))})
+
+(def- month-names
+  ["January" "February" "March" "April" "May" "June" "July" "August"
+   "September" "October" "November" "December"])
+
+(def- day-names
+  ["Sunday" "Monday" "Tuesday" "Wednesday" "Thursday" "Friday" "Saturday"])
+
+(defn format-offset
+  """
+  Returns the offset in seconds as `+HHMM`, or as `+HH:MM` if colon? is
+  true.
+  """
+  ([offset] (format-offset offset false))
+  ([offset colon?]
+   (def m (math/floor (/ (math/abs offset) 60)))
+   (string/format "%s%02d%s%02d" (if (neg? offset) "-" "+") (math/floor (/ m 60))
+                  (if colon? ":" "") (% m 60))))
+
+(defn format
+  """
+  Formats time, in seconds since the epoch, at offset, in seconds, with the
+  directives of strftime in fmt:
+
+  - `%Y` year, `%y` two-digit year, `%m` month, `%d` day, `%e` day padded
+    with a space, `%j` day of the year
+  - `%H` hour, `%I` hour on a 12-hour clock, `%M` minute, `%S` second, `%p`
+    AM or PM, `%s` seconds since the epoch
+  - `%B` and `%b` the month's name and its first three letters, `%A` and
+    `%a` the day's
+  - `%z` the offset as `+0900`, `%Z` zone, or the offset if zone is nil
+  - `%%` a percent sign
+
+  A `-` after the `%`, as in `%-d`, leaves out the padding of a number.
+  """
+  ([fmt time offset] (format fmt time offset nil))
+  ([fmt time offset zone]
+   (def d (parts time offset))
+   (def hour12 (let [h (% (d :hour) 12)] (if (zero? h) 12 h)))
+   (def out !"")
+   (var i 0)
+   (while (< i (length fmt))
+     (def c (get fmt i))
+     (if (not= c (chr "%"))
+       (do
+         (buffer/push-byte! out c)
+         (++ i))
+       (do
+         (def bare? (= (get fmt (inc i)) (chr "-")))
+         (def j (if bare? (+ i 2) (inc i)))
+         (def d2 (fn [n] (string/format (if bare? "%d" "%02d") n)))
+         (def spec (get fmt j))
+         (unless spec
+           (errorf "incomplete directive at the end of %q" fmt))
+         (buffer/push!
+           out
+           (case (string/from-bytes spec)
+             "Y" (string (d :year))
+             "y" (d2 (% (d :year) 100))
+             "m" (d2 (d :month))
+             "d" (d2 (d :day))
+             "e" (if bare? (string (d :day)) (string/format "%2d" (d :day)))
+             "j" (string/format (if bare? "%d" "%03d") (d :year-day))
+             "H" (d2 (d :hour))
+             "I" (d2 hour12)
+             "M" (d2 (d :minute))
+             "S" (d2 (d :second))
+             "p" (if (< (d :hour) 12) "AM" "PM")
+             "s" (string (math/floor time))
+             "B" (month-names (dec (d :month)))
+             "b" (string/slice (month-names (dec (d :month))) 0 3)
+             "A" (day-names (d :week-day))
+             "a" (string/slice (day-names (d :week-day)) 0 3)
+             "z" (format-offset offset)
+             "Z" (or zone (format-offset offset))
+             "%" "%"
+             (errorf "unknown directive %%%s in %q" (string/from-bytes spec) fmt)))
+         (set i (inc j)))))
+   (string out)))
+
+(defn rfc3339
+  """
+  Returns time at offset in the form of RFC 3339, as in
+  `2026-04-21T12:53:37+09:00`. This is Jekyll's `date_to_xmlschema`.
+  """
+  [time offset]
+  (string (format "%Y-%m-%dT%H:%M:%S" time offset) (format-offset offset true)))
+
+(defn rfc822
+  """
+  Returns time at offset in the form of RFC 822, as in
+  `Tue, 21 Apr 2026 12:53:37 +0900`. This is Jekyll's `date_to_rfc822`.
+  """
+  [time offset]
+  (format "%a, %d %b %Y %H:%M:%S %z" time offset))

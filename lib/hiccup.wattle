@@ -1,0 +1,150 @@
+; Hiccup: HTML and XML written as Wattle data.
+;
+; - An element is a vector whose first item is a keyword, the tag. The tag
+;   can carry an ID and classes, as in `:div#main.post.wide`. An optional
+;   map of attributes comes next, and the rest are the children. An `:id`
+;   attribute takes precedence over an ID in the tag, and `:class` is added
+;   to the tag's classes.
+; - A string or number is text and is escaped. nil and false are left out.
+; - Any other vector, an array or a tuple is a sequence of forms, so the
+;   result of `map` can be a child.
+; - `(raw s)` is HTML that is not escaped, such as rendered Markdown.
+;
+; Attributes are written in sorted order, so that the output is the same on
+; each run. An attribute whose value is true is written without a value, one
+; whose value is nil or false is left out, and one whose value is a vector is
+; joined with spaces, as for `:class`.
+
+(def- void-elements
+  #{:area :base :br :col :embed :hr :img :input :link :meta :param :source
+    :track :wbr})
+
+(def- special (peg/compile '(set "&<>\"")))
+
+(defn escape
+  "Escapes the characters in s that are special in HTML text and attributes."
+  [s]
+  (def s (string s))
+  (if (peg/find special s)
+    (->> s
+         (string/replace-all "&" "&amp;")
+         (string/replace-all "<" "&lt;")
+         (string/replace-all ">" "&gt;")
+         (string/replace-all "\"" "&quot;"))
+    s))
+
+(defn raw
+  "Returns a form for s that is written as it is, without escaping."
+  [s]
+  [:hiccup/raw (string s)])
+
+(def- tag-grammar
+  (peg/compile
+    `{:part (<- (some (if-not (set ".#") 1)))
+      :main (* :part
+               (any (+ (* "." (/ :part ~(fn [c] [:class c])))
+                       (* "#" (/ :part ~(fn [i] [:id i])))))
+               -1)}))
+
+(defn- read-tag [tag]
+  (def [name & parts] (or (peg/match tag-grammar (string tag))
+                          (errorf "invalid tag %q" tag)))
+  (def ids (filter #(= :id (first $)) parts))
+  (when (> (length ids) 1)
+    (errorf "tag %q has more than one ID" tag))
+  [name
+   (get (first ids) 1)
+   (vec (map #(get $ 1) (filter #(= :class (first $)) parts)))
+   (has-value? void-elements (keyword name))])
+
+; Tags already read, since a site uses few tags many times.
+(def- tags !{})
+
+(defn- parse-tag
+  """
+  Returns the name, the ID (or nil), the classes and whether the element is
+  void for the tag keyword.
+  """
+  [tag]
+  (or (get tags tag)
+      (let [parsed (read-tag tag)]
+        (put! tags tag parsed)
+        parsed)))
+
+(defn- attr-value [v]
+  (if (indexed? v)
+    (string/join " " (map string (filter #(not (nil? $)) v)))
+    (string v)))
+
+(defn- write-attrs [buf attrs]
+  (each k (sort (keys attrs))
+    (def v (attrs k))
+    (cond
+      (or (nil? v) (= false v)) nil
+      (= true v) (buffer/push! buf " " (string k))
+      (buffer/push! buf " " (string k) "=\"" (escape (attr-value v)) "\""))))
+
+(defn- element? [form]
+  (and (indexed? form) (not (tuple? form)) (keyword? (first form))))
+
+(defn- write [buf form xml?]
+  (cond
+    (or (nil? form) (= false form)) nil
+    (or (string? form) (buffer? form) (number? form)) (buffer/push! buf (escape form))
+    (element? form)
+    (let [[tag & items] form]
+      (if (= tag :hiccup/raw)
+        (buffer/push! buf (first items))
+        (let [[name id classes void?] (parse-tag tag)
+              given (first items)
+              attrs? (dictionary? given)
+              attrs (if attrs? given {})
+              children (if attrs? (slice items 1) items)
+              c (attrs :class)
+              class (cond
+                      (nil? c) classes
+                      (indexed? c) (filter #(not (nil? $)) [|classes |c])
+                      [|classes c])
+              merged (if (and (empty? class) (nil? id))
+                       attrs
+                       (assoc attrs
+                              :class (if (empty? class) nil class)
+                              :id (if (nil? (attrs :id)) id (attrs :id))))]
+          (buffer/push! buf "<" name)
+          (write-attrs buf merged)
+          (cond
+            (and xml? (empty? children)) (buffer/push! buf "/>")
+            (and (not xml?) void?)
+            (do
+              (unless (empty? children)
+                (errorf "<%s> cannot have children" name))
+              (buffer/push! buf ">"))
+            (do
+              (buffer/push! buf ">")
+              (each child children
+                (write buf child xml?))
+              (buffer/push! buf "</" name ">"))))))
+    (indexed? form) (each child form (write buf child xml?))
+    (errorf "cannot write %q as HTML" form)))
+
+(defn html
+  "Returns the HTML for forms."
+  [& forms]
+  (def buf !"")
+  (write buf forms false)
+  (string buf))
+
+(defn html5
+  "Returns `<!doctype html>`, a line break and the HTML for forms."
+  [& forms]
+  (string "<!doctype html>\n" (html |forms)))
+
+(defn xml
+  """
+  Returns the XML for forms. Elements without children are written as
+  `<tag/>`, and no element is void.
+  """
+  [& forms]
+  (def buf !"")
+  (write buf forms true)
+  (string buf))

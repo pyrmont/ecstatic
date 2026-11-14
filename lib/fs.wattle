@@ -1,0 +1,40 @@
+(defn parent
+  "Returns the directory part of path, or nil if path has none."
+  [path]
+  (when-let [i (last (string/find-all "/" path))]
+    (if (zero? i) "/" (string/slice path 0 i))))
+
+(defn basename
+  "Returns the last part of path."
+  [path]
+  (last (string/split "/" path)))
+
+(defn mkdirp
+  "Creates the directory path and any missing parents."
+  [path]
+  (var dir nil)
+  (each part (string/split "/" path)
+    (set dir (if (nil? dir) part (string dir "/" part)))
+    (unless (or (empty? dir) (os/stat dir :mode))
+      (os/mkdir dir))))
+
+(defn write
+  "Writes content to path, creating missing directories."
+  [path content]
+  (when-let [dir (parent path)]
+    (mkdirp dir))
+  (spit path content))
+
+(defn rmrf
+  """
+  Removes path and, if it is a directory, everything under it. A symbolic
+  link is removed, not followed. Does nothing if path does not exist.
+  """
+  [path]
+  (case (os/lstat path :mode)
+    :directory (do
+                 (each name (os/dir path)
+                   (rmrf (string path "/" name)))
+                 (os/rmdir path))
+    nil nil
+    (os/rm path)))

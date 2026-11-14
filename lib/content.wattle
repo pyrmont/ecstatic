@@ -1,0 +1,201 @@
+; Reads the files of a site's source directory, as Jekyll does:
+;
+; - Files under `_posts/`, at any depth, named `YYYY-MM-DD-slug.ext`, are
+;   posts.
+; - Other files that begin with front matter are pages.
+; - Every other file is static and is copied unchanged.
+;
+; Files and directories whose names begin with `_` or `.` are skipped, apart
+; from `_posts` and the paths in the configuration's `:include`. The paths in
+; `:exclude` are skipped. A post or page whose front matter sets `published`
+; to false is skipped, and so is a post dated in the future unless
+; `:future?` is true.
+
+(import ./date)
+(import ./frontmatter)
+
+(def markdown-extensions
+  "The extensions of files that are converted from Markdown."
+  ["md" "markdown" "mkdown" "mkdn" "mkd"])
+
+(defn extension
+  "Returns the extension of the file name or path, without the dot, or nil."
+  [path]
+  (def name (last (string/split "/" path)))
+  (when-let [i (last (string/find-all "." name))]
+    (when (pos? i)
+      (string/slice name (inc i)))))
+
+(defn- strip-extension [path]
+  (if-let [ext (extension path)]
+    (string/slice path 0 (- (length path) (length ext) 1))
+    path))
+
+(defn markdown?
+  "Returns true if path has a Markdown extension."
+  [path]
+  (has-value? markdown-extensions (extension path)))
+
+(defn- list-of
+  """
+  Returns the value v of a list-like key in front matter as a vector of
+  strings. A string is split on spaces, as Jekyll does.
+  """
+  [v]
+  (cond
+    (nil? v) []
+    (bytes? v) (vector |(filter #(not (empty? $)) (string/split " " v)))
+    (indexed? v) (vector |(map string v))
+    [(string v)]))
+
+(defn- unique [xs]
+  (vector |(distinct xs)))
+
+(defn- url-of-path
+  """
+  Returns the URL of the page at path: a Markdown page ends in `.html`, and
+  `index.html` is the URL of its directory.
+  """
+  [path]
+  (def out (if (markdown? path) (string (strip-extension path) ".html") path))
+  (def url (string "/" out))
+  (if (or (= url "/index.html") (string/has-suffix? "/index.html" url))
+    (string/slice url 0 (- (length url) (length "index.html")))
+    url))
+
+(defn- absolute-url [url]
+  (if (string/has-prefix? "/" url) url (string "/" url)))
+
+(defn path-of-url
+  """
+  Returns the path, relative to the destination, of the file for url. A URL
+  that ends in `/` is the directory's `index.html`.
+  """
+  [url]
+  (def path (string/triml url "/"))
+  (if (or (empty? path) (string/has-suffix? "/" path))
+    (string path "index.html")
+    path))
+
+(defn default-permalink
+  """
+  Returns the URL of post as Jekyll's `date` permalink style gives it:
+  `/:categories/:year/:month/:day/:title.html`, with the date at the
+  configuration's offset.
+  """
+  [post offset]
+  (def d (date/parts (post :date) offset))
+  (string "/"
+          (string/join "" (map #(string $ "/") (post :categories)))
+          (string/format "%04d/%02d/%02d/" (d :year) (d :month) (d :day))
+          (post :slug) ".html"))
+
+(def- post-name
+  (peg/compile
+    '(* (<- (* (4 :d) "-" (2 :d) "-" (2 :d))) "-" (<- (some 1)) -1)))
+
+(defn- read-file
+  "Returns the front matter and body of the file at path, or nil."
+  [path]
+  (when (frontmatter/has-front-matter? path)
+    (when-let [[fm body] (frontmatter/split (string (slurp path)))]
+      (def data (try (frontmatter/parse fm)
+                  ([e] (errorf "%s: %s" path e))))
+      [data body])))
+
+(defn- read-post
+  "Returns the post at rel, a path relative to source, or nil if it is skipped."
+  [source rel offset]
+  (def name (strip-extension (last (string/split "/" rel))))
+  (when-let [[day slug] (peg/match post-name name)]
+    (when-let [[fm body] (read-file (string source "/" rel))]
+      (unless (= false (fm :published))
+        (def time (try (date/parse (string (or (fm :date) day)) offset)
+                    ([e] (errorf "%s/%s: %s" source rel e))))
+        {:kind :post
+         :path rel
+         :slug (string (or (fm :slug) slug))
+         :date time
+         :title (fm :title)
+         :categories (unique [|(list-of (fm :category))
+                              |(list-of (fm :categories))])
+         :tags (unique [|(list-of (fm :tag)) |(list-of (fm :tags))])
+         :front-matter fm
+         :content body}))))
+
+(defn- read-page
+  "Returns the page at rel, or nil if it has no front matter or is skipped."
+  [source rel]
+  (when-let [[fm body] (read-file (string source "/" rel))]
+    (unless (= false (fm :published))
+      {:kind :page
+       :path rel
+       :title (fm :title)
+       :url (if-let [p (fm :permalink)] (absolute-url (string p)) (url-of-path rel))
+       :front-matter fm
+       :content body})))
+
+(defn- files-under
+  "Returns the paths of the files under dir, relative to it, in sorted order."
+  [dir]
+  (def out ![])
+  (defn walk [rel]
+    (def path (if rel (string dir "/" rel) dir))
+    (each name (sort (os/dir path))
+      (def child (if rel (string rel "/" name) name))
+      (case (os/stat (string dir "/" child) :mode)
+        :directory (walk child)
+        :file (array/push! out child))))
+  (when (= :directory (os/stat dir :mode))
+    (walk nil))
+  out)
+
+(defn- skipped?
+  """
+  Returns true if the file at rel is skipped: a part of its path begins with
+  `_` or `.` and the path is not under an included path, or the path is
+  under an excluded path.
+  """
+  [rel include exclude]
+  (defn under? [prefix]
+    (or (= rel prefix) (string/has-prefix? (string prefix "/") rel)))
+  (or (find under? exclude)
+      (and (find #(or (string/has-prefix? "_" $) (string/has-prefix? "." $))
+                 (string/split "/" rel))
+           (not (find under? include)))))
+
+(defn read-site
+  """
+  Reads the site in the directory source with the configuration config.
+  Returns a map with `:posts`, newest first, `:pages` and `:static`, the
+  paths of the static files. Each post and page is a map with `:kind`,
+  `:path` (relative to source), `:title`, `:front-matter` and `:content`
+  (the text after the front matter). A post also has `:slug`, `:date` (in
+  seconds since the epoch), `:categories` and `:tags`, and a page has
+  `:url`. Posts are given URLs by the caller.
+  """
+  [source config]
+  (def offset (date/parse-offset (get config :offset "+0000")))
+  (def include (get config :include []))
+  (def exclude (get config :exclude []))
+  (def now (os/time))
+  (def posts ![])
+  (def pages ![])
+  (def static ![])
+  (each rel (files-under source)
+    (cond
+      (string/has-prefix? "_posts/" rel)
+      (when-let [post (read-post source rel offset)]
+        (when (or (get config :future?) (<= (post :date) now))
+          (array/push! posts post)))
+      (skipped? rel include exclude)
+      nil
+      (if-let [page (read-page source rel)]
+        (array/push! pages page)
+        (array/push! static rel))))
+  {:posts (vector |(sort #(if (= ($0 :date) ($1 :date))
+                           (> ($0 :path) ($1 :path))
+                           (> ($0 :date) ($1 :date)))
+                         posts))
+   :pages (vector |pages)
+   :static (vector |static)})

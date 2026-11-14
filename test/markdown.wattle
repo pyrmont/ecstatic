@@ -1,0 +1,64 @@
+(import ../deps/gum/test :prefix "")
+
+; The cmark module must be built first with `wattle build lib`.
+(import cmark)
+(import ../lib/markdown)
+
+(def- md {:options [:footnotes :smart :unsafe]})
+
+(defn- message [f]
+  (try (do (f) nil) ([e] e)))
+
+(deftest bits
+  (is (= 0 (markdown/bits [])))
+  (is (= (bor (blshift 1 13) (blshift 1 10) (blshift 1 17))
+         (markdown/bits [:footnotes :smart :unsafe])))
+  (is (== "unknown Markdown option :fast" (message #(markdown/bits [:fast])))))
+
+(deftest render-with-options
+  (is (== "<p>“Hi” <b>there</b></p>\n" (markdown/render "\"Hi\" <b>there</b>" md)))
+  (is (== "<p>&quot;Hi&quot; <!-- raw HTML omitted -->there<!-- raw HTML omitted --></p>\n"
+          (markdown/render "\"Hi\" <b>there</b>"))))
+
+(deftest render-footnotes
+  (def html (markdown/render "A[^1].\n\n[^1]: Note.\n" md))
+  (is (string/has-prefix?
+        "<p>A<sup class=\"footnote-ref\"><a href=\"#fn-1\" id=\"fnref-1\" data-footnote-ref>1</a></sup>.</p>\n<section class=\"footnotes\" data-footnotes>"
+        html)))
+
+(deftest render-with-transforms
+  (def calls ![])
+  (defn upcase-text [root]
+    (array/push! calls :upcase)
+    (each node (cmark/nodes root)
+      (when (= :text (cmark/type node))
+        (cmark/set-literal! node (string/ascii-upper (cmark/literal node))))))
+  (defn wrap-emph [root]
+    (array/push! calls :wrap)
+    (each node (cmark/nodes root)
+      (when (= :emph (cmark/type node))
+        (cmark/insert-before! node (cmark/set-literal! (cmark/new root :html-inline) "["))
+        (cmark/insert-after! node (cmark/set-literal! (cmark/new root :html-inline) "]")))))
+  (is (== "<p>A [<em>B</em>] C</p>\n"
+          (markdown/render "a *b* c" (assoc md :transforms [upcase-text wrap-emph]))))
+  (is (== [:upcase :wrap] calls)))
+
+(deftest inline
+  (is (== "Introducing <em>Jeep</em> – a tool\n"
+          (markdown/inline "Introducing *Jeep* -- a tool" md)))
+  (is (== "a\nb\n" (markdown/inline "a\n\nb" md))))
+
+(deftest excerpt-source
+  (is (== "First paragraph." (markdown/excerpt-source "First paragraph.\n\nSecond.")))
+  (is (== "\nFirst." (markdown/excerpt-source "\nFirst.\n\nSecond.")))
+  (is (== "Only one." (markdown/excerpt-source "Only one.")))
+  (is (== "See [x][a] and [y].\n\n[a]: https://a.example/\n   [y]: /y \"Y\""
+          (markdown/excerpt-source
+            "See [x][a] and [y].\n\nMore.\n\n[a]: https://a.example/\n   [y]: /y \"Y\"\n    [z]: /indented-code\n"))))
+
+(deftest excerpt-renders-references
+  (is (== "<p>See <a href=\"https://a.example/\">x</a>.</p>\n"
+          (markdown/render (markdown/excerpt-source "See [x][a].\n\nMore.\n\n[a]: https://a.example/\n")
+                           md))))
+
+(run-tests!)

@@ -1,0 +1,62 @@
+{:name "ecstatic"
+ :group "net.inqk"
+ :version "DEVEL"
+ :description "A static site generator"
+ :author "Michael Camilleri"
+ :license "MIT"
+ :url "https://github.com/pyrmont/ecstatic"
+ :exes [{:type :native :name "ecstatic" :entry "lib/cli.wattle"}]
+ :libs [{:type :native
+         :name "cmark"
+         :root "src/cmark.zig"
+         :for ["ecstatic"]
+         :c-sources ["deps/cmark-gfm/src/arena.c"
+                     "deps/cmark-gfm/src/blocks.c"
+                     "deps/cmark-gfm/src/buffer.c"
+                     "deps/cmark-gfm/src/cmark.c"
+                     "deps/cmark-gfm/src/cmark_ctype.c"
+                     "deps/cmark-gfm/src/commonmark.c"
+                     "deps/cmark-gfm/src/footnotes.c"
+                     "deps/cmark-gfm/src/houdini_href_e.c"
+                     "deps/cmark-gfm/src/houdini_html_e.c"
+                     "deps/cmark-gfm/src/houdini_html_u.c"
+                     "deps/cmark-gfm/src/html.c"
+                     "deps/cmark-gfm/src/inlines.c"
+                     "deps/cmark-gfm/src/iterator.c"
+                     "deps/cmark-gfm/src/latex.c"
+                     "deps/cmark-gfm/src/linked_list.c"
+                     "deps/cmark-gfm/src/man.c"
+                     "deps/cmark-gfm/src/map.c"
+                     "deps/cmark-gfm/src/node.c"
+                     "deps/cmark-gfm/src/plaintext.c"
+                     "deps/cmark-gfm/src/plugin.c"
+                     "deps/cmark-gfm/src/references.c"
+                     "deps/cmark-gfm/src/registry.c"
+                     "deps/cmark-gfm/src/render.c"
+                     "deps/cmark-gfm/src/scanners.c"
+                     "deps/cmark-gfm/src/syntax_extension.c"
+                     "deps/cmark-gfm/src/utf8.c"
+                     "deps/cmark-gfm/src/xml.c"]
+         :c-includes ["deps/cmark-gfm/config" "deps/cmark-gfm/src"]}
+        {:type :native
+         :name "onig"
+         :root "src/onig.zig"
+         :for ["ecstatic"]
+         :c-sources ["deps/oniguruma/src/regerror.c"
+                     "deps/oniguruma/src/regparse.c"
+                     "deps/oniguruma/src/regcomp.c"
+                     "deps/oniguruma/src/regexec.c"
+                     "deps/oniguruma/src/regenc.c"
+                     "deps/oniguruma/src/regsyntax.c"
+                     "deps/oniguruma/src/st.c"
+                     "deps/oniguruma/src/onig_init.c"
+                     "deps/oniguruma/src/unicode.c"
+                     "deps/oniguruma/src/ascii.c"
+                     "deps/oniguruma/src/utf8.c"
+                     "deps/oniguruma/src/unicode_unfold_key.c"
+                     "deps/oniguruma/src/unicode_fold1_key.c"
+                     "deps/oniguruma/src/unicode_fold2_key.c"
+                     "deps/oniguruma/src/unicode_fold3_key.c"]
+         :c-includes ["deps/oniguruma/config" "deps/oniguruma/src"]
+         :c-flags ["-DHAVE_CONFIG_H"]}]
+ :docs [{:type :man :files ["man/man1/ecstatic.1"] :for ["ecstatic"]}]}

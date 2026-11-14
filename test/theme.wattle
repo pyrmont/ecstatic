@@ -1,0 +1,67 @@
+(import ../deps/gum/test :prefix "")
+(import ./support/fixture)
+
+(import ../lib/theme)
+
+; The cmark module must be built first with `wattle build lib`.
+
+(def- dir "tmp/test/theme")
+
+(defn- load-site [files]
+  (theme/load (fixture/make-site dir files)))
+
+(defn- message [f]
+  (try (do (f) nil) ([e] e)))
+
+(deftest load-theme
+  (def env (load-site {"_ecstatic.wattle"
+                       """
+                       (def config {:title "Test"})
+                       (defn build [site] [])
+                       """}))
+  (is (== {:title "Test"} (theme/lookup env 'config)))
+  (is (function? (theme/lookup env 'build)))
+  (is (nil? (theme/lookup env 'missing))))
+
+(deftest load-theme-with-relative-import
+  (def env (load-site {"_ecstatic.wattle"
+                       """
+                       (import ./_theme/layout)
+                       (defn build [site] (layout/title "Test"))
+                       """
+                       "_theme/layout.wattle"
+                       """
+                       (defn title [s] (string "<h1>" s "</h1>"))
+                       """}))
+  (is (== "<h1>Test</h1>" ((theme/lookup env 'build) {}))))
+
+(deftest load-theme-with-exposed-bindings
+  (def env (load-site {"_ecstatic.wattle"
+                       """
+                       (defn build [site]
+                         (markdown/render "*x*" {:transforms [(fn [root] (cmark/nodes root))]}))
+                       """}))
+  (is (== "<p><em>x</em></p>\n" ((theme/lookup env 'build) {}))))
+
+(deftest load-theme-without-build
+  (fixture/make-site dir {"_ecstatic.wattle" "(def config {})"})
+  (is (== (string dir "/_ecstatic.wattle does not define build as a function")
+          (message #(theme/load dir)))))
+
+(deftest load-theme-with-build-not-a-function
+  (fixture/make-site dir {"_ecstatic.wattle" "(def build 1)"})
+  (is (== (string dir "/_ecstatic.wattle does not define build as a function")
+          (message #(theme/load dir)))))
+
+(deftest load-missing-theme
+  (fixture/make-site dir {"index.md" ""})
+  (is (== (string "cannot find " dir "/_ecstatic.wattle")
+          (message #(theme/load dir)))))
+
+(deftest load-theme-with-compile-error
+  (fixture/make-site dir {"_ecstatic.wattle" "(defn build [site] (oops))"})
+  (is (== (string dir "/_ecstatic.wattle:1:20: compile error: unknown symbol oops")
+          (message #(theme/load dir)))))
+
+(defer (fixture/rmrf dir)
+  (run-tests!))

@@ -1,0 +1,96 @@
+(import ../deps/gum/args)
+(import ./serve)
+(import ./site)
+(import ./version)
+
+(def- build-config
+  {:help "Build a site."
+   :rules ["--source"      {:help    "The directory of the site's source files."
+                            :default "."
+                            :kind    :single
+                            :proxy   "dir"
+                            :short   "s"}
+           "--destination" {:help    "The directory to write the site into."
+                            :default "../public"
+                            :kind    :single
+                            :proxy   "dir"
+                            :short   "d"}
+           "--quiet"       {:help  "Suppress progress output."
+                            :kind  :flag
+                            :short "q"}
+           "-------------------------------------------"]})
+
+(def- serve-config
+  {:help "Serve a built site locally."
+   :rules ["--directory" {:help    "The directory to serve."
+                          :default "../public"
+                          :kind    :single
+                          :proxy   "dir"
+                          :short   "d"}
+           "--host"      {:help    "The address to listen on."
+                          :default serve/default-host
+                          :kind    :single
+                          :proxy   "host"
+                          :short   "H"}
+           "--port"      {:help    "The port to listen on."
+                          :default (string serve/default-port)
+                          :kind    :single
+                          :proxy   "port"
+                          :short   "p"}
+           "--quiet"     {:help  "Suppress the log of requests."
+                          :kind  :flag
+                          :short "q"}
+           "-------------------------------------------"]})
+
+(defn- parse-port [s]
+  (def n (scan-number s))
+  (assertf (and n (int? n) (<= 0 n 65535)) "invalid port: %s" s)
+  n)
+
+(def config
+  "The configuration for Argy-Bargy"
+  {:rules ["--version" {:help  "Show version information."
+                        :kind  :flag
+                        :noex? true
+                        :short "v"}
+           "-------------------------------------------"]
+   :subs ["build" build-config
+          "serve" serve-config]
+   :info {:about "Generate a static site from Markdown and a Wattle theme."}})
+
+(defn run [args]
+  (def parsed (args/parse-args "ecstatic" config args))
+  (def err (parsed :err))
+  (def help (parsed :help))
+  (cond
+    (not (empty? help))
+    (do
+      (prin help)
+      (os/exit (if (or (get-in parsed [:opts "help"])
+                       (get-in parsed [:sub :opts "help"]))
+                 0 1)))
+    (get-in parsed [:opts "version"])
+    (print version/value)
+    (not (empty? err))
+    (do
+      (eprin err)
+      (os/exit 1))
+    (do
+      (def sub (parsed :sub))
+      (def opts (sub :opts))
+      (try
+        (case (sub :cmd)
+          "build"
+          (site/build :source (opts "source")
+                      :destination (opts "destination")
+                      :quiet? (opts "quiet"))
+          "serve"
+          (serve/serve :directory (opts "directory")
+                       :host (opts "host")
+                       :port (parse-port (opts "port"))
+                       :quiet? (opts "quiet")))
+        ([e]
+          (eprint "ecstatic: " e)
+          (os/exit 1))))))
+
+(defn main [script & args] (run args))

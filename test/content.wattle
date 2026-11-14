@@ -1,0 +1,167 @@
+(import ../deps/gum/test :prefix "")
+(import ./support/fixture)
+
+(import ../lib/content)
+
+(def- dir "tmp/test/content")
+
+(defn- message [f]
+  (try (do (f) nil) ([e] e)))
+
+(defn- read [files & config]
+  (fixture/make-site dir files)
+  (content/read-site dir (or (first config) {:offset "+0900"})))
+
+(defn- paths [xs]
+  (map #($ :path) xs))
+
+; Posts
+
+(deftest read-post
+  (def site (read {"_posts/2026-04-21-introducing-listless.md"
+                   """
+                   ---
+                   title: "Introducing Listless"
+                   date: 2026-04-21 12:53:37 +0900
+                   category:
+                   tags: [apps]
+                   ---
+
+                   Body.
+                   """}))
+  (def post (first (site :posts)))
+  (is (== :post (post :kind)))
+  (is (== "_posts/2026-04-21-introducing-listless.md" (post :path)))
+  (is (== "introducing-listless" (post :slug)))
+  (is (== "Introducing Listless" (post :title)))
+  (is (= 1776743617 (post :date)))
+  (is (== [] (post :categories)))
+  (is (== ["apps"] (post :tags)))
+  ; A raw string drops the line break before its closing quotes.
+  (is (== "\nBody." (post :content)))
+  (is (== "Introducing Listless" (get-in post [:front-matter :title]))))
+
+(deftest read-post-in-subdirectory
+  (def site (read {"_posts/2021/2021-05-24-nhk-radio-news.md"
+                   "---\ndate: 2021-05-24 08:00:00 +0900\n---\nx"}))
+  (is (== ["_posts/2021/2021-05-24-nhk-radio-news.md"] (paths (site :posts))))
+  (is (== "nhk-radio-news" ((first (site :posts)) :slug))))
+
+(deftest read-post-date-from-file-name
+  (def site (read {"_posts/2026-04-21-a.md" "---\n---\n"}))
+  ; Midnight at the configured offset.
+  (is (= 1776697200 ((first (site :posts)) :date))))
+
+(deftest read-post-slug-from-front-matter
+  (def site (read {"_posts/2026-04-21-a.md" "---\nslug: other\n---\n"}))
+  (is (== "other" ((first (site :posts)) :slug))))
+
+(deftest read-post-categories
+  (def site (read {"_posts/2026-01-01-a.md"
+                   "---\ncategory: [\"weeknotes\"]\ncategories: weeknotes misc\n---\n"
+                   "_posts/2026-01-02-b.md" "---\ncategories: [\"weeknotes\"]\n---\n"}))
+  (is (== [["weeknotes"] ["weeknotes" "misc"]]
+          (map #($ :categories) (site :posts)))))
+
+(deftest read-posts-newest-first
+  (def site (read {"_posts/2026-01-01-a.md" "---\n---\n"
+                   "_posts/2026-03-01-c.md" "---\n---\n"
+                   "_posts/2026/2026-02-01-b.md" "---\n---\n"
+                   "_posts/2026-02-01-z.md" "---\n---\n"}))
+  ; Posts on the same date are in descending order of path, as in Jekyll.
+  (is (== ["_posts/2026-03-01-c.md" "_posts/2026/2026-02-01-b.md"
+           "_posts/2026-02-01-z.md" "_posts/2026-01-01-a.md"]
+          (paths (site :posts)))))
+
+(deftest read-posts-skips-unpublished-and-undated
+  (def site (read {"_posts/2026-01-01-a.md" "---\npublished: false\n---\n"
+                   "_posts/notes.md" "---\n---\n"
+                   "_posts/2026-01-02-b.md" "no front matter"
+                   "_posts/2026-01-03-c.md" "---\n---\n"}))
+  (is (== ["_posts/2026-01-03-c.md"] (paths (site :posts))))
+  (is (== [] (site :static))))
+
+(deftest read-posts-in-the-future
+  (def files {"_posts/2999-01-01-later.md" "---\n---\n"
+              "_posts/2026-01-01-now.md" "---\n---\n"})
+  (is (== ["_posts/2026-01-01-now.md"] (paths ((read files) :posts))))
+  (is (== ["_posts/2999-01-01-later.md" "_posts/2026-01-01-now.md"]
+          (paths ((read files {:future? true}) :posts)))))
+
+(deftest read-post-with-bad-date
+  (is (== (string dir "/_posts/2026-01-01-a.md: invalid date soon")
+          (message #(read {"_posts/2026-01-01-a.md" "---\ndate: soon\n---\n"})))))
+
+(deftest read-post-with-bad-front-matter
+  (is (== (string dir "/_posts/2026-01-01-a.md: front matter line 1: invalid list")
+          (message #(read {"_posts/2026-01-01-a.md" "---\na: [x\n---\n"})))))
+
+; Pages and static files
+
+(deftest read-pages
+  (def site (read {"index.html" "---\nlayout: frame\n---\n<ul></ul>"
+                   "about.md" "---\ntitle: \"About\"\n---\nHi."
+                   "feeds/weeknotes.xml" "---\nlayout: null\n---\n<rss/>"
+                   "list/index.md" "---\n---\n"
+                   "_pages/licence.md" "---\npermalink: licence.html\n---\n"}
+                  {:include ["_pages"]}))
+  (is (== [["/licence.html" "_pages/licence.md"]
+           ["/about.html" "about.md"]
+           ["/feeds/weeknotes.xml" "feeds/weeknotes.xml"]
+           ["/" "index.html"]
+           ["/list/" "list/index.md"]]
+          (map #(do [($ :url) ($ :path)]) (site :pages))))
+  (is (== "About" ((find #(= "about.md" ($ :path)) (site :pages)) :title)))
+  (is (== "Hi." ((find #(= "about.md" ($ :path)) (site :pages)) :content))))
+
+(deftest read-static-files
+  (def site (read {"LICENSE" "MIT"
+                   "assets/css/style.css" "body {}"
+                   "notes.md" "No front matter."
+                   "uploads/2019/a.jpg" "\xFF\xD8"}))
+  (is (== ["LICENSE" "assets/css/style.css" "notes.md" "uploads/2019/a.jpg"]
+          (site :static)))
+  (is (== [] (site :pages))))
+
+(deftest read-site-skips-underscores-and-dots
+  (def site (read {"_config.yml" "title: x"
+                   "_ecstatic.wattle" "(defn build [site] [])"
+                   "_includes/footer.html" "---\n---\n"
+                   ".git/config" ""
+                   "assets/.DS_Store" ""
+                   "assets/_partial.scss" ""
+                   "_pages/licence.md" "---\n---\n"
+                   "keep.txt" ""}))
+  (is (== ["keep.txt"] (site :static)))
+  (is (== [] (site :pages))))
+
+(deftest read-site-excludes
+  (def site (read {"Gemfile" "" "Gemfile.lock" "" "vendor/ruby/x.rb" ""
+                   "vendored.txt" ""}
+                  {:exclude ["Gemfile" "vendor"]}))
+  (is (== ["Gemfile.lock" "vendored.txt"] (site :static))))
+
+; URLs
+
+(deftest default-permalink
+  (def post {:slug "dev-dependencies" :categories [] :date 1635465600})
+  ; 2021-10-29 00:00 UTC is 09:00 in Tokyo.
+  (is (== "/2021/10/29/dev-dependencies.html"
+          (content/default-permalink post 32400)))
+  (is (== "/weeknotes/misc/2021/10/28/dev-dependencies.html"
+          (content/default-permalink
+            (assoc post :categories ["weeknotes" "misc"] :date 1635433199)
+            32400))))
+
+(deftest path-of-url
+  (is (== ["index.html" "list/2/index.html" "post/1.html" "feed.xml"]
+          (map content/path-of-url ["/" "/list/2/" "/post/1.html" "feed.xml"]))))
+
+(deftest extensions
+  (is (== ["md" "xml" nil nil "gz"]
+          (map content/extension ["a/b.md" "feed.xml" "LICENSE" ".gitkeep" "a.tar.gz"])))
+  (is (content/markdown? "a.markdown"))
+  (is (not (content/markdown? "a.html"))))
+
+(defer (fixture/rmrf dir)
+  (run-tests!))

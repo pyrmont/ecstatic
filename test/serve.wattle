@@ -1,0 +1,66 @@
+(import ../deps/gum/test :prefix "")
+(import ./support/fixture)
+(import ../lib/serve)
+
+(def- dir "tmp/test/serve")
+
+(defn- make-site []
+  (fixture/make-site dir {"index.html" "<h1>Home</h1>"
+                          "about.html" "<h1>About</h1>"
+                          "list/2/index.html" "<h1>Page 2</h1>"
+                          "feed.xml" "<feed/>"
+                          "a b.txt" "spaced"}))
+
+(deftest content-type
+  (is (= "text/html; charset=utf-8" (serve/content-type "x/index.html")))
+  (is (= "application/xml" (serve/content-type "feed.xml")))
+  (is (= "image/png" (serve/content-type "a/B.PNG")))
+  (is (= "application/octet-stream" (serve/content-type "a.v1/README"))))
+
+(deftest locate
+  (make-site)
+  (is (== [:file (string dir "/index.html")] (serve/locate dir "/")))
+  (is (== [:file (string dir "/about.html")] (serve/locate dir "/about.html?v=1")))
+  (is (== [:file (string dir "/about.html")] (serve/locate dir "/about")))
+  (is (== [:file (string dir "/list/2/index.html")] (serve/locate dir "/list/2/")))
+  (is (== [:redirect "/list/2/?x=1"] (serve/locate dir "/list/2?x=1")))
+  (is (== [:file (string dir "/a b.txt")] (serve/locate dir "/a%20b.txt")))
+  (is (= nil (serve/locate dir "/missing.html")))
+  (is (= nil (serve/locate dir "/list/")))
+  (is (= :bad (serve/locate dir "/../serve/index.html")))
+  (is (= :bad (serve/locate dir "/%2e%2e/serve/index.html")))
+  (is (= :bad (serve/locate dir "/a%00")))
+  (is (= :bad (serve/locate dir "index.html"))))
+
+(defn- request [port req]
+  (with [c (net/connect "127.0.0.1" port)]
+    (net/write c req)
+    (string (net/read c :all))))
+
+(deftest server
+  (make-site)
+  (def server (serve/start :directory dir :port 0 :quiet? true))
+  (defer (:close server)
+    (def port ((net/localname server) 1))
+    (def res (request port "GET /about HTTP/1.1\r\nHost: x\r\n\r\n"))
+    (is (string/has-prefix? "HTTP/1.1 200 OK\r\n" res))
+    (is (string/find "Content-Type: text/html; charset=utf-8\r\n" res))
+    (is (string/find "Content-Length: 14\r\n" res))
+    (is (string/has-suffix? "\r\n\r\n<h1>About</h1>" res))
+    (def head (request port "HEAD /feed.xml HTTP/1.1\r\n\r\n"))
+    (is (string/find "Content-Length: 7\r\n" head))
+    (is (string/has-suffix? "\r\n\r\n" head))
+    (def moved (request port "GET /list/2 HTTP/1.1\r\n\r\n"))
+    (is (string/has-prefix? "HTTP/1.1 301 " moved))
+    (is (string/find "Location: /list/2/\r\n" moved))
+    (is (string/has-prefix? "HTTP/1.1 404 " (request port "GET /nope HTTP/1.1\r\n\r\n")))
+    (is (string/has-prefix? "HTTP/1.1 400 " (request port "GET /../x HTTP/1.1\r\n\r\n")))
+    (is (string/has-prefix? "HTTP/1.1 405 " (request port "POST / HTTP/1.1\r\n\r\n")))))
+
+(deftest start-missing-directory
+  (def [ok? e] (protect (serve/start :directory (string dir "/none") :port 0)))
+  (is (not ok?))
+  (is (== (string "not a directory: " dir "/none") e)))
+
+(defer (fixture/rmrf dir)
+  (run-tests!))

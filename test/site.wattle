@@ -1,0 +1,291 @@
+(import ../deps/gum/test :prefix "")
+(import ./support/fixture)
+
+(import ../lib/site)
+
+(def- dir "tmp/test/site")
+(def- src (string dir "/src"))
+(def- out (string dir "/public"))
+
+(defn- make-theme [source & files]
+  (fixture/make-site src (merge {"_ecstatic.wattle" source} |files)))
+
+(defn- build []
+  (site/build :source src :destination out :quiet? true))
+
+(defn- page [path]
+  (string (slurp (string out "/" path))))
+
+(defn- message [f]
+  (try (do (f) nil) ([e] e)))
+
+(deftest build-writes-pages
+  (make-theme
+    """
+    (def config {:title "Test"})
+    (defn build [site]
+      [{:path "index.html" :body (get-in site [:config :title])}
+       {:path "a/b/c.html" :body !"deep"}])
+    """)
+  (fixture/rmrf out)
+  (build)
+  (is (== "Test" (page "index.html")))
+  (is (== "deep" (page "a/b/c.html"))))
+
+(deftest build-passes-site
+  (make-theme
+    """
+    (def config {:title "Test"})
+    (defn build [site]
+      [{:path "site.txt"
+        :body (string/format "%q" (assoc site :source nil :destination nil
+                                         :revision nil :time nil))}])
+    """)
+  (build)
+  (is (== "{:config {:title \"Test\"} :pages [] :posts [] :static []}"
+          (page "site.txt"))))
+
+(defn- urls-theme [& extra]
+  (string/join "\n"
+               [|extra
+                """
+                (defn build [site]
+                  [{:path "urls.txt"
+                    :body (string/join " " (map #($ :url) (site :posts)))}])
+                """]))
+
+(deftest build-gives-posts-default-urls
+  (make-theme (urls-theme "(def config {:offset \"+0900\"})")
+              {"_posts/2021-10-29-dev-dependencies.md"
+               "---\ndate: 2021-10-29 08:00:00 +0900\n---\n"
+               "_posts/2021-10-30-weeknotes.md"
+               "---\ncategories: [\"weeknotes\"]\n---\n"})
+  (build)
+  (is (== "/weeknotes/2021/10/30/weeknotes.html /2021/10/29/dev-dependencies.html"
+          (page "urls.txt"))))
+
+(deftest build-gives-posts-theme-urls
+  (make-theme (urls-theme "(defn permalink [post] (string \"post/\" (post :date) \".html\"))")
+              {"_posts/2020-02-17-a.md" "---\ndate: 2020-02-17T06:04:55.990-00:00\n---\n"
+               "_posts/2020-02-18-b.md" "---\ndate: 2020-02-18 00:00:00 +0000\npermalink: /b/\n---\n"})
+  (build)
+  (is (== "/b/ /post/1581919495.html" (page "urls.txt"))))
+
+(deftest build-rejects-bad-permalink
+  (make-theme (urls-theme "(defn permalink [post] 1)")
+              {"_posts/2020-02-17-a.md" "---\n---\n"})
+  (is (== "permalink for _posts/2020-02-17-a.md is 1, not a string"
+          (message build))))
+
+(deftest build-converts-markdown
+  (make-theme
+    """
+    (defn smallcaps [root]
+      (each node (cmark/nodes root)
+        (when (= :strong (cmark/type node))
+          (cmark/insert-before! node (cmark/set-literal! (cmark/new root :html-inline) "<span>"))
+          (cmark/insert-after! node (cmark/set-literal! (cmark/new root :html-inline) "</span>")))))
+    (def config {:markdown {:options [:smart :unsafe] :transforms [smallcaps]}})
+    (defn build [site]
+      (map (fn [item]
+             {:path (string (item :path) ".out")
+              :body (string/format "%q" [(item :html) (item :excerpt)])})
+           [|(site :posts) |(site :pages)]))
+    """
+    {"_posts/2026-01-01-a.md" "---\n---\n\"A\" **b**.\n\nMore.\n"
+     "_posts/2026-01-02-b.md" "---\nexcerpt: \"Given.\"\n---\nText.\n"
+     "about.md" "---\n---\nAbout.\n"
+     "feed.xml" "---\n---\n<rss>**x**</rss>"})
+  (build)
+  (defn result [path] (parse (page path)))
+  (is (== ["<p>“A” <span><strong>b</strong></span>.</p>\n<p>More.</p>\n"
+           "<p>“A” <span><strong>b</strong></span>.</p>\n"]
+          (result "_posts/2026-01-01-a.md.out")))
+  (is (== ["<p>Text.</p>\n" "Given."] (result "_posts/2026-01-02-b.md.out")))
+  (is (== ["<p>About.</p>\n" "<p>About.</p>\n"] (result "about.md.out")))
+  (is (== ["<rss>**x**</rss>" nil] (result "feed.xml.out"))))
+
+(deftest build-names-file-with-bad-markdown-option
+  (make-theme "(def config {:markdown {:options [:fast]}}) (defn build [site] [])"
+              {"about.md" "---\n---\nx"})
+  (is (== "about.md: unknown Markdown option :fast" (message build))))
+
+(deftest build-copies-static-files
+  (make-theme "(defn build [site] [])"
+              {"LICENSE" "MIT" "uploads/2019/a.jpg" "\xFF\xD8\x00" "_draft.txt" "no"})
+  (fixture/rmrf out)
+  (build)
+  (is (== "MIT" (page "LICENSE")))
+  (is (== "\xFF\xD8\x00" (page "uploads/2019/a.jpg")))
+  (is (nil? (os/stat (string out "/_draft.txt") :mode))))
+
+(deftest build-rejects-page-over-static-file
+  (make-theme "(defn build [site] [{:path \"LICENSE\" :body \"x\"}])"
+              {"LICENSE" "MIT"})
+  (is (== "page LICENSE is also a static file" (message build))))
+
+(deftest build-accepts-array
+  (make-theme
+    """
+    (defn build [site]
+      (map #(do {:path (string $ ".html") :body $}) ["a" "b"]))
+    """)
+  (build)
+  (is (== "a" (page "a.html")))
+  (is (== "b" (page "b.html"))))
+
+(deftest build-rejects-non-vector
+  (make-theme "(defn build [site] 42)")
+  (is (== "build returned 42, not a vector of pages" (message build))))
+
+(deftest build-rejects-bad-pages
+  (each [pages msg]
+        [["[1]" "expected a page, got 1"]
+         ["[{:body \"\"}]" "page has no path: {:body \"\"}"]
+         ["[{:path \"/x\" :body \"\"}]" "page path /x is outside the destination"]
+         ["[{:path \"a/../../x\" :body \"\"}]"
+          "page path a/../../x is outside the destination"]
+         ["[{:path \"x\"}]" "page x has no body"]]
+    (make-theme (string "(defn build [site] " pages ")"))
+    (is (== msg (message build)))))
+
+(deftest build-writes-nothing-if-a-page-is-bad
+  (make-theme
+    """
+    (defn build [site]
+      [{:path "ok.html" :body "ok"} {:path "/bad" :body ""}])
+    """)
+  (fixture/rmrf out)
+  (message build)
+  (is (nil? (os/stat (string out "/ok.html") :mode))))
+
+(deftest build-rejects-page-written-twice
+  (make-theme "(defn build [site] [{:path \"a\" :body \"1\"} {:path \"a\" :body \"2\"}])")
+  (is (== "page a is written twice" (message build))))
+
+; Site metadata
+
+(deftest build-gives-modified-times-and-time
+  ; The fixture is under tmp/, which Git ignores, so file times are used.
+  (make-theme
+    """
+    (defn build [site]
+      [{:path "meta.txt"
+        :body (string/format "%q" [(get-in site [:posts 0 :modified])
+                                   (get-in site [:pages 0 :modified])
+                                   (site :time)])}])
+    """
+    {"_posts/2026-01-01-a.md" "---\n---\n" "about.md" "---\n---\n"})
+  (def before (os/time))
+  (build)
+  (def [post-time page-time time] (parse (page "meta.txt")))
+  (is (= post-time (os/stat (string src "/_posts/2026-01-01-a.md") :modified)))
+  (is (= page-time (os/stat (string src "/about.md") :modified)))
+  (is (<= before time (os/time))))
+
+(deftest build-gives-revision
+  (make-theme "(defn build [site] [{:path \"rev.txt\" :body (string (site :revision))}])")
+  (build)
+  (def proc (os/spawn ["git" "rev-parse" "HEAD"] :p {:out :pipe :err :pipe}))
+  (def head (string/trim (string (or (:read (proc :out) :all) ""))))
+  (:read (proc :err) :all)
+  (os/proc-wait proc)
+  (is (== head (page "rev.txt"))))
+
+; Replacing the destination
+
+(defn- files [d]
+  (sort (filter #(not (string/has-prefix? "." $)) (os/dir d))))
+
+(defn- siblings []
+  (sort (filter #(string/find "ecstatic" $) (os/dir dir))))
+
+(deftest build-replaces-destination
+  (make-theme "(defn build [site] [{:path \"new.html\" :body \"new\"}])")
+  (fixture/rmrf out)
+  (fixture/make-site out {"stale.html" "old" "old/x.html" "old"})
+  (build)
+  (is (== ["new.html"] (files out)))
+  (is (== [] (siblings))))
+
+(deftest build-creates-destination
+  (make-theme "(defn build [site] [{:path \"a/b.html\" :body \"x\"}])")
+  (fixture/rmrf out)
+  (build)
+  (is (== "x" (page "a/b.html")))
+  (is (== [] (siblings))))
+
+(deftest build-keeps-paths
+  (make-theme "(defn build [site] [{:path \"index.html\" :body \"new\"}])")
+  (fixture/rmrf out)
+  (fixture/make-site out {".gitkeep" "" ".git/HEAD" "ref" "stale.html" "old"
+                          ".other" "x"})
+  (build)
+  (is (== "" (page ".gitkeep")))
+  (is (== "ref" (page ".git/HEAD")))
+  (is (nil? (os/stat (string out "/.other") :mode)))
+  (is (nil? (os/stat (string out "/stale.html") :mode))))
+
+(deftest build-keeps-configured-paths
+  (make-theme
+    """
+    (def config {:keep ["keep/me.txt"]})
+    (defn build [site] [{:path "index.html" :body "new"}])
+    """)
+  (fixture/rmrf out)
+  (fixture/make-site out {"keep/me.txt" "kept" ".gitkeep" ""})
+  (build)
+  (is (== "kept" (page "keep/me.txt")))
+  (is (nil? (os/stat (string out "/.gitkeep") :mode))))
+
+(deftest build-refuses-to-write-a-kept-path
+  (make-theme "(defn build [site] [{:path \".gitkeep\" :body \"x\"}])")
+  (fixture/rmrf out)
+  (fixture/make-site out {".gitkeep" "" "index.html" "old"})
+  (is (== "the site writes .gitkeep, which the destination keeps" (message build)))
+  (is (== "old" (page "index.html")))
+  (is (== "" (page ".gitkeep")))
+  (is (== [] (siblings))))
+
+(deftest build-failure-leaves-destination
+  (make-theme "(defn build [site] [{:path \"index.html\" :body \"new\"}])"
+              {"bad/file" "x"})
+  (fixture/rmrf out)
+  (fixture/make-site out {"index.html" "old"})
+  ; A static file that cannot be read makes copying fail.
+  (os/chmod (string src "/bad/file") 0)
+  (def msg (message build))
+  (os/chmod (string src "/bad/file") 8r644)
+  (is (not (nil? msg)))
+  (is (== "old" (page "index.html")))
+  (is (== [] (siblings))))
+
+(deftest build-removes-leftover-staging
+  (make-theme "(defn build [site] [{:path \"index.html\" :body \"new\"}])")
+  (fixture/rmrf out)
+  (fixture/make-site (string dir "/.public.ecstatic-new") {"junk" ""})
+  (fixture/make-site (string dir "/.public.ecstatic-old") {"junk" ""})
+  (build)
+  (is (== ["index.html"] (files out)))
+  (is (== [] (siblings))))
+
+(deftest build-keeps-destination-permissions
+  (make-theme "(defn build [site] [{:path \"index.html\" :body \"new\"}])")
+  (fixture/rmrf out)
+  (fixture/make-site out {"index.html" "old"})
+  (os/chmod out 8r750)
+  (build)
+  (is (== "rwxr-x---" (os/stat out :permissions))))
+
+(deftest build-refuses-unsafe-destinations
+  (make-theme "(defn build [site] [])")
+  (is (== (string "destination " src " contains the source " src)
+          (message #(site/build :source src :destination src :quiet? true))))
+  (is (== (string "destination " dir " contains the source " src)
+          (message #(site/build :source src :destination dir :quiet? true))))
+  (is (== (string "destination " src "/_ecstatic.wattle is not a directory")
+          (message #(site/build :source src :destination (string src "/_ecstatic.wattle")
+                                :quiet? true)))))
+
+(defer (fixture/rmrf dir)
+  (run-tests!))

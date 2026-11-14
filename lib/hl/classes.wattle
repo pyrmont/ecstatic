@@ -1,0 +1,64 @@
+; Maps TextMate scope names to CSS classes. Copied from Augite, with classes
+; added for operators, built-ins, constants, escapes and console sessions,
+; and with a shell command's arguments left plain.
+
+; Each prefix matches a scope that is the prefix or starts with it and a dot.
+; A token takes the class of its innermost scope that matches; where two
+; prefixes match one scope, the earlier wins. The quotes of a string and the
+; markers of a comment take the class of what they delimit, and code
+; embedded in a string takes none from the string. The quotes of a JSON key
+; take the class of the key.
+(def- prefixes
+  [["punctuation.definition.string" "hl-string"]
+   ["punctuation.definition.comment" "hl-comment"]
+   ["punctuation.support.type.property-name" "hl-property"]
+   ["punctuation.separator.prompt" "hl-prompt"]
+   ["support.type.property-name" "hl-property"]
+   ["entity.other.attribute-name" "hl-property"]
+   ["entity.name.tag" "hl-tag"]
+   ["meta.embedded" nil]
+   ["meta.output" "hl-output"]
+   ["string.unquoted.argument" nil]
+   ["comment" "hl-comment"]
+   ["string" "hl-string"]
+   ["constant.numeric" "hl-number"]
+   ["constant.character.escape" "hl-escape"]
+   ["constant" "hl-constant"]
+   ["keyword.operator" "hl-operator"]
+   ["keyword" "hl-keyword"]
+   ["storage" "hl-storage"]
+   ["entity.name.type" "hl-type"]
+   ["entity.name.function" "hl-function"]
+   ["support.function" "hl-builtin"]
+   ["support" "hl-type"]
+   ["variable" "hl-variable"]
+   ["punctuation" "hl-punctuation"]
+   ["invalid" "hl-invalid"]])
+
+(defn- match-prefix
+  "Returns the entry of prefixes that scope matches, or nil."
+  [scope]
+  (find (fn [[prefix _]]
+          (and (string/has-prefix? prefix scope)
+               (or (= (length prefix) (length scope))
+                   (= (chr ".") (get scope (length prefix))))))
+        prefixes))
+
+(def- cache !{})
+
+(defn class-of
+  "Returns the CSS class for a token with scopes, outermost first, or nil."
+  [scopes]
+  (var result nil)
+  (var i (dec (length scopes)))
+  (while (>= i 0)
+    (def scope (get scopes i))
+    (unless (has-key? cache scope)
+      (put! cache scope (or (match-prefix scope) false)))
+    (def entry (get cache scope))
+    (if entry
+      (do
+        (set result (get entry 1))
+        (set i -1))
+      (-- i)))
+  result)

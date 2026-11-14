@@ -1,0 +1,15 @@
+; The version of Ecstatic, set when the program is compiled. `wattle build exe`
+; binds *build-version* to a label derived from :version in info.edn, which
+; for DEVEL includes the Git commit. Without it, :version is used.
+
+(def value
+  (comptime
+    (do
+      (defn dirname [path]
+        (def i (last (string/find-all "/" path)))
+        (if i (string/slice path 0 i) "."))
+      (def root (-> (dyn :current-file) os/realpath dirname dirname))
+      (def info (-> (string root "/info.edn") slurp parse-all first))
+      (or (dyn *build-version*)
+          (get info :version)
+          (error "info.edn missing version")))))

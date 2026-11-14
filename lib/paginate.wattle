@@ -1,0 +1,21 @@
+(defn pages
+  """
+  Splits items into pages of per-page items. Returns a vector of maps, one
+  for each page, with `:number` (from 1), `:items`, `:previous` and `:next`
+  (the numbers of the pages either side, or nil), `:pages` (the number of
+  pages) and `:total` (the number of items). There is always at least one
+  page, so a site with no posts still has an index.
+  """
+  [items per-page]
+  (unless (and (int? per-page) (pos? per-page))
+    (errorf "items per page must be a positive integer, got %q" per-page))
+  (def chunks (if (empty? items) [[]] (partition per-page items)))
+  (def n (length chunks))
+  (vector |(map (fn [i]
+                  {:number (inc i)
+                   :items (vector |(chunks i))
+                   :previous (when (pos? i) i)
+                   :next (when (< (inc i) n) (+ i 2))
+                   :pages n
+                   :total (length items)})
+                (range n))))

@@ -1,0 +1,80 @@
+; Markdown with cmark-gfm, through the native module `cmark`.
+;
+; A Markdown configuration is a map with `:options`, a vector of keywords
+; from `option-bits`, and `:transforms`, a vector of functions. Each transform
+; is called with the document node after parsing and before rendering, and
+; edits the tree with the `cmark/` functions. Its result is ignored.
+
+(import cmark)
+
+(def option-bits
+  "The cmark options, by keyword, with their bits."
+  {:sourcepos (blshift 1 1)
+   :hardbreaks (blshift 1 2)
+   :nobreaks (blshift 1 4)
+   :validate-utf8 (blshift 1 9)
+   :smart (blshift 1 10)
+   :github-pre-lang (blshift 1 11)
+   :liberal-html-tag (blshift 1 12)
+   :footnotes (blshift 1 13)
+   :full-info-string (blshift 1 16)
+   :unsafe (blshift 1 17)})
+
+(defn bits
+  "Returns the cmark option bits for options, a vector of keywords."
+  [options]
+  (reduce (fn [acc k]
+            (bor acc (or (option-bits k)
+                         (errorf "unknown Markdown option %q" k))))
+          0 options))
+
+(defn parse
+  """
+  Parses text with the Markdown configuration md, runs its transforms and
+  returns the document node.
+  """
+  ([text] (parse text {}))
+  ([text md]
+   (def root (cmark/parse text (bits (get md :options []))))
+   (each f (get md :transforms [])
+     (f root))
+   root))
+
+(defn render
+  "Returns the HTML for the Markdown text with the Markdown configuration md."
+  ([text] (render text {}))
+  ([text md]
+   (cmark/render-html (parse text md) (bits (get md :options [])))))
+
+(defn inline
+  """
+  Returns the HTML for the Markdown text without its `<p>` and `</p>` tags,
+  for text that is a line, such as a title. This is what Jekyll's
+  `linedownify` filter gave.
+  """
+  ([text] (inline text {}))
+  ([text md]
+   (->> (render text md)
+        (string/replace-all "<p>" "")
+        (string/replace-all "</p>" ""))))
+
+(def- link-definition
+  (peg/compile '(* (at-most 3 " ") "[" (some (if-not "]" 1)) "]:" (some 1) -1)))
+
+(defn excerpt-source
+  """
+  Returns the Markdown of the excerpt of content: the text before the first
+  blank line, followed by the link reference definitions in the rest, so that
+  reference links in the excerpt resolve. This is how Jekyll extracts an
+  excerpt.
+  """
+  [content]
+  (def i (string/find "\n\n" content))
+  (if (nil? i)
+    content
+    (let [head (string/slice content 0 i)
+          defs (filter #(peg/match link-definition $)
+                       (string/split "\n" (string/slice content (+ i 2))))]
+      (if (empty? defs)
+        head
+        (string head "\n\n" (string/join "\n" defs))))))

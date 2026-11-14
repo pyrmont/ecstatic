@@ -1,0 +1,214 @@
+(import ../deps/gum/test :prefix "")
+(import ./support/fixture)
+
+; These tests run the executable that `wattle build exe` writes, so build it
+; first and run from the project root.
+(def- exe "zig-out/bin/ecstatic")
+
+(unless (= :file (os/stat exe :mode))
+  (error (string "cannot find " exe " (run `wattle build exe` from the project root)")))
+
+(def- dir "tmp/test/executable")
+(def- src (string dir "/src"))
+
+; Each run reads standard input from /dev/null, so a run cannot wait for input
+; when the tests run in a terminal.
+(defn- run [& args]
+  (with [null (file/open "/dev/null" :r)]
+    (def env {"PATH" (os/getenv "PATH")
+              :in null :out :pipe :err :pipe})
+    (def proc (os/spawn [exe |args] :pe env))
+    (def out (:read (proc :out) :all))
+    (def err (:read (proc :err) :all))
+    [(os/proc-wait proc) out err]))
+
+(deftest cli-bad-option
+  (def [exit-code out err] (run "--bad-option"))
+  (def msg
+    """
+    ecstatic: unrecognized option '--bad-option'
+    Try 'ecstatic --help' for more information.
+    """)
+  (is (= 1 exit-code))
+  (is (= nil out))
+  (is (== (string msg "\n") err)))
+
+(deftest cli-no-subcommand
+  (def [exit-code out err] (run))
+  (def msg
+    """
+    ecstatic: no subcommand provided
+    Try 'ecstatic --help' for more information.
+    """)
+  (is (= 1 exit-code))
+  (is (= nil out))
+  (is (== (string msg "\n") err)))
+
+(deftest cli-help
+  (def [exit-code out err] (run "--help"))
+  (def msg
+    """
+    Usage: ecstatic <subcommand> [<args>]
+
+    Generate a static site from Markdown and a Wattle theme.
+
+    Options:
+
+     -v, --version    Show version information.
+
+     -h, --help       Show this help message.
+
+    Subcommands:
+
+     build    Build a site.
+     serve    Serve a built site locally.
+
+    For more information on each subcommand, type 'ecstatic help <subcommand>'.
+    """)
+  (is (= 0 exit-code))
+  (is (== (string msg "\n") out))
+  (is (= nil err)))
+
+(deftest cli-build-help
+  (def [exit-code out err] (run "build" "--help"))
+  (def msg
+    """
+    Usage: ecstatic build [--source <dir>] [--destination <dir>] [--quiet]
+
+    Build a site.
+
+    Options:
+
+     -s, --source <dir>         The directory of the site's source files. (Default: .)
+     -d, --destination <dir>    The directory to write the site into. (Default: ../public)
+     -q, --quiet                Suppress progress output.
+
+     -h, --help                 Show this help message.
+    """)
+  (is (= 0 exit-code))
+  (is (== (string msg "\n") out))
+  (is (= nil err)))
+
+(deftest cli-serve-help
+  (def [exit-code out err] (run "serve" "--help"))
+  (def msg
+    """
+    Usage: ecstatic serve [--directory <dir>] [--host <host>] [--port <port>] [--quiet]
+
+    Serve a built site locally.
+
+    Options:
+
+     -d, --directory <dir>    The directory to serve. (Default: ../public)
+     -H, --host <host>        The address to listen on. (Default: 127.0.0.1)
+     -p, --port <port>        The port to listen on. (Default: 4000)
+     -q, --quiet              Suppress the log of requests.
+
+     -h, --help               Show this help message.
+    """)
+  (is (= 0 exit-code))
+  (is (== (string msg "\n") out))
+  (is (= nil err)))
+
+(defn- git-describe []
+  (def [ok? proc] (protect (os/spawn ["git" "describe" "--always" "--dirty"
+                                      "--abbrev=7" "--match=NONE"]
+                                     :p {:out :pipe :err :pipe})))
+  (when ok?
+    (def out (:read (proc :out) :all))
+    (:read (proc :err) :all)
+    (when (and (zero? (os/proc-wait proc)) out)
+      (string/trim out))))
+
+; The label that `wattle build exe` derives from :version in info.edn.
+(defn- expected-version []
+  (def version (get (first (parse-all (slurp "info.edn"))) :version))
+  (if (= "DEVEL" version)
+    (if-let [described (git-describe)]
+      (string "DEVEL-" described)
+      "DEVEL")
+    version))
+
+(deftest cli-version
+  (def expect (expected-version))
+  (each flag ["--version" "-v"]
+    (def [exit-code out err] (run flag))
+    (is (= 0 exit-code))
+    (is (== (string expect "\n") out))
+    (is (= nil err))))
+
+(defn- make-theme [source]
+  (fixture/make-site src {"_ecstatic.wattle" source
+                          "_theme/layout.wattle"
+                          """
+                          (defn page [title] (string "<h1>" title "</h1>"))
+                          """}))
+
+(deftest cli-build
+  (make-theme
+    """
+    (import ./_theme/layout)
+    (def config {:title "Test"})
+    (defn build [site]
+      [{:path "index.html" :body (layout/page (get-in site [:config :title]))}])
+    """)
+  (def out (string dir "/public"))
+  (def [exit-code stdout err] (run "build" "-s" src "-d" out))
+  (def msg
+    (string "Loading theme from " src "/_ecstatic.wattle... done\n"
+            "Reading site from " src "... done (0 posts, 0 pages, 0 static files)\n"
+            "Building pages... done\n"
+            "Writing 1 page to " out "... done\n"
+            "Copying 0 static files to " out "... done\n"
+            "Done!\n"))
+  (is (= 0 exit-code))
+  (is (== msg stdout))
+  (is (= nil err))
+  (is (== "<h1>Test</h1>" (slurp (string out "/index.html")))))
+
+(deftest cli-build-quiet
+  (make-theme "(defn build [site] [])")
+  (def [exit-code out err] (run "build" "-q" "-s" src "-d" (string dir "/public")))
+  (is (= 0 exit-code))
+  (is (= nil out))
+  (is (= nil err)))
+
+(deftest cli-build-missing-theme
+  (fixture/make-site src {"index.md" ""})
+  (def [exit-code out err] (run "build" "-q" "-s" src))
+  (is (= 1 exit-code))
+  (is (= nil out))
+  (is (== (string "ecstatic: cannot find " src "/_ecstatic.wattle\n") err)))
+
+; Reads from stream up to and including the next line break, into buf.
+(defn- read-line [stream buf]
+  (while (and (not (string/find "\n" buf)) (ev/read stream 1 buf 5)))
+  (def i (string/find "\n" buf))
+  (def line (string/slice buf 0 (inc i)))
+  (def rest (string/slice buf (inc i)))
+  (buffer/push! (buffer/clear! buf) rest)
+  line)
+
+(deftest cli-serve
+  (fixture/make-site (string dir "/site") {"index.html" "<h1>Home</h1>"})
+  (with [null (file/open "/dev/null" :r)]
+    (def proc (os/spawn [exe "serve" "-d" (string dir "/site") "-p" "0"] :p
+                        {:in null :out :pipe :err :pipe}))
+    (defer (do (os/proc-kill proc true) (:close (proc :err)))
+      (def buf !"")
+      (def line (read-line (proc :out) buf))
+      (def [port] (peg/match '(* "Serving " (thru "http://127.0.0.1:") (<- :d+) "/\n") line))
+      (is port)
+      (with [c (net/connect "127.0.0.1" port)]
+        (net/write c "GET / HTTP/1.1\r\n\r\n")
+        (is (string/has-suffix? "\r\n\r\n<h1>Home</h1>" (string (net/read c :all)))))
+      (is (== "GET / HTTP/1.1 200\n" (read-line (proc :out) buf))))))
+
+(deftest cli-serve-bad-port
+  (def [exit-code out err] (run "serve" "-p" "http"))
+  (is (= 1 exit-code))
+  (is (= nil out))
+  (is (== "ecstatic: invalid port: http\n" err)))
+
+(defer (fixture/rmrf dir)
+  (run-tests!))

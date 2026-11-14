@@ -1,0 +1,542 @@
+; A TextMate grammar engine, following vscode-textmate. Copied from Augite,
+; with begin/while rules added.
+;
+; A grammar is tokenized one line at a time. The state between lines is a
+; stack of the begin/end and begin/while rules that are open, each an element
+; of a linked list of maps. A begin/while rule stays open while its while
+; regex matches at the start of each later line.
+
+(import onig)
+
+; Rules
+
+(defn- warn [g msg]
+  (unless (get (g :warned) msg)
+    (put! (g :warned) msg true)
+    (eprint "ecstatic: warning: " (g :scope-name) ": " msg)))
+
+(defn- register [g rule]
+  (def id (length (g :rules)))
+  (array/push! (g :rules) rule)
+  id)
+
+(var- rule-id nil)
+
+(defn- compile-captures [g caps repo]
+  (when caps
+    (def out ![])
+    (eachk k caps
+      (when-let [n (scan-number k)]
+        (def cap (get caps k))
+        (while (<= (length out) n)
+          (array/push! out nil))
+        (put! out n {:name (get cap "name")
+                     :content-name (get cap "contentName")
+                     :rule (when (get cap "patterns") (rule-id g cap repo))})))
+    (vec out)))
+
+(defn- skip?
+  "Returns true if the rule with id includes nothing because its includes are missing."
+  [g id]
+  (def rule (get (g :rules) id))
+  (and (rule :missing?) (empty? (rule :patterns))))
+
+(var- compile-patterns nil)
+
+(defn- repository
+  """
+  Returns the repository of the grammar raw, with the grammar as $self and
+  the grammar base as $base.
+  """
+  [raw base]
+  (merge (or (get raw "repository") {}) {"$self" raw "$base" base}))
+
+(defn- include-id
+  """
+  Returns the id of the rule that the include reference names, or nil. A
+  reference to a grammar that is not in the registry is nil.
+  """
+  [g ref repo]
+  (cond
+    (or (= ref "$self") (= ref "$base"))
+    (rule-id g (get repo ref) repo)
+    (string/has-prefix? "#" ref)
+    (when-let [desc (get repo (string/slice ref 1))]
+      (rule-id g desc repo))
+    (do
+      (def [scope name] (string/split "#" ref))
+      (when-let [ext (get (g :registry) scope)]
+        (def ext-repo (repository ext (get repo "$base")))
+        (when-let [desc (if name (get ext-repo name) ext)]
+          (rule-id g desc ext-repo))))))
+
+(set compile-patterns
+  (fn [g patterns repo]
+    (def ids ![])
+    (each p (or patterns [])
+      (def id (if-let [ref (get p "include")]
+                (include-id g ref repo)
+                (rule-id g p repo)))
+      (when (and id (not (skip? g id)))
+        (array/push! ids id)))
+    {:patterns ids :missing? (not= (length ids) (length (or patterns [])))}))
+
+(defn- fill-rule
+  "Fills in the rule from desc."
+  [g rule desc repo]
+  (def name (get desc "name"))
+  (cond
+    (get desc "match")
+    (merge! rule {:kind :match
+                  :name name
+                  :match (get desc "match")
+                  :captures (compile-captures g (get desc "captures") repo)})
+    (nil? (get desc "begin"))
+    (do
+      (def repo (if-let [r (get desc "repository")] (merge repo r) repo))
+      (def patterns (or (get desc "patterns")
+                        (when-let [ref (get desc "include")] [{"include" ref}])))
+      (def ps (compile-patterns g patterns repo))
+      (merge! rule {:kind :include
+                    :name name
+                    :content-name (get desc "contentName")
+                    :patterns (ps :patterns)
+                    :missing? (ps :missing?)}))
+    (get desc "while")
+    (do
+      (def ps (compile-patterns g (get desc "patterns") repo))
+      (def while-src (get desc "while"))
+      (merge! rule {:kind :begin-while
+                    :name name
+                    :content-name (get desc "contentName")
+                    :begin (get desc "begin")
+                    :begin-captures (compile-captures g (or (get desc "beginCaptures")
+                                                            (get desc "captures")) repo)
+                    :while while-src
+                    :while-backrefs? (truthy? (peg/match ['to ['* "\\" ['range "09"]]] while-src))
+                    :while-captures (compile-captures g (or (get desc "whileCaptures")
+                                                            (get desc "captures")) repo)
+                    :patterns (ps :patterns)
+                    :missing? (ps :missing?)}))
+    (do
+      (def ps (compile-patterns g (get desc "patterns") repo))
+      (def end (or (get desc "end") ""))
+      (merge! rule {:kind :begin-end
+                    :name name
+                    :content-name (get desc "contentName")
+                    :begin (get desc "begin")
+                    :begin-captures (compile-captures g (or (get desc "beginCaptures")
+                                                            (get desc "captures")) repo)
+                    :end end
+                    :end-backrefs? (truthy? (peg/match ['to ['* "\\" ['range "09"]]] end))
+                    :end-captures (compile-captures g (or (get desc "endCaptures")
+                                                          (get desc "captures")) repo)
+                    :end-last? (truthy? (get desc "applyEndPatternLast"))
+                    :patterns (ps :patterns)
+                    :missing? (ps :missing?)}))))
+
+(set rule-id
+  (fn [g desc repo]
+    ; A rule is compiled once, and before the rules it includes, so that an
+    ; include can refer to a rule being compiled.
+    (or (get (g :ids) desc)
+        (do
+          (def rule !{})
+          (def id (register g rule))
+          (put! (g :ids) desc id)
+          (put! rule :id id)
+          (fill-rule g rule desc repo)
+          id))))
+
+; Regexes
+
+(defn- check
+  "Warns, once for each source, if the regex source cannot be compiled. Such a regex never matches."
+  [g source]
+  (unless (get (g :regexes) source)
+    (put! (g :regexes) source true)
+    (when-let [e (onig/error source)]
+      (warn g (string/format "%s: %s" e (string/slice source 0 (min 60 (length source))))))))
+
+(defn- resolve-anchors
+  """
+  Returns source with \A replaced by a character that cannot match unless a?,
+  and \G unless g?, as vscode-textmate does.
+  """
+  [source a? g?]
+  (if (and a? g?)
+    source
+    (do
+      (def out !"")
+      (def len (length source))
+      (var i 0)
+      (while (< i len)
+        (def c (get source i))
+        (if (and (= c (chr "\\")) (< (inc i) len))
+          (do
+            (def n (get source (inc i)))
+            (if (or (and (= n (chr "A")) (not a?)) (and (= n (chr "G")) (not g?)))
+              (buffer/push! out "\uFFFF")
+              (buffer/push-byte! out c n))
+            (+= i 2))
+          (do
+            (buffer/push-byte! out c)
+            (++ i))))
+      (string out))))
+
+(defn- collect-patterns
+  "Pushes [source id] for each regex that the rule with id contributes to a scanner."
+  [g id out seen]
+  (def rule (get (g :rules) id))
+  (case (rule :kind)
+    :match (array/push! out [(rule :match) id])
+    :begin-end (array/push! out [(rule :begin) id])
+    :begin-while (array/push! out [(rule :begin) id])
+    :include (unless (get seen id)
+               (put! seen id true)
+               (each p (rule :patterns)
+                 (collect-patterns g p out seen)))))
+
+(def- end-id -1)
+
+(defn- scanner
+  """
+  Returns the scanner for the patterns of the rule with id, with end, the
+  source of its end regex, if it has one: a map of :scanner and :ids, the rule
+  id of each regex (end-id for the end). \A can match only if a?, and \G only
+  if g?.
+  """
+  [g id end a? g?]
+  (def key [id end a? g?])
+  (or (get (g :scanners) key)
+      (do
+        (def rule (get (g :rules) id))
+        (def items ![])
+        (def seen !{})
+        (each p (rule :patterns)
+          (collect-patterns g p items seen))
+        (when end
+          (if (rule :end-last?)
+            (array/push! items [end end-id])
+            (array/insert! items 0 [end end-id])))
+        (each [source] items
+          (check g source))
+        (def s {:scanner (onig/scanner (map #(resolve-anchors (first $) a? g?) items))
+                :ids (vec (map #(get $ 1) items))})
+        (put! (g :scanners) key s)
+        s)))
+
+; Names
+
+(defn- captured [text caps n]
+  (when-let [[s e] (get caps n)]
+    (string/slice text s e)))
+
+(def- digits ['/ ['<- ['some ['range "09"]]] scan-number])
+
+(def- name-peg
+  (peg/compile
+    ['any ['+ ['group ['* "${" digits ":/" ['<- ['+ "downcase" "upcase"]] "}"]]
+              ['group ['* "$" digits]]
+              ['<- 1]]]))
+
+(defn- resolve-name
+  "Substitutes the captures in caps of text for $n and ${n:/downcase} in name."
+  [name text caps]
+  (if (or (nil? name) (nil? (string/find "$" name)))
+    name
+    (do
+      (def out !"")
+      (each part (peg/match name-peg name)
+        (if (string? part)
+          (buffer/push! out part)
+          (do
+            (var value (or (captured text caps (first part)) ""))
+            (while (string/has-prefix? "." value)
+              (set value (string/slice value 1)))
+            (case (get part 1)
+              "downcase" (set value (string/ascii-lower value))
+              "upcase" (set value (string/ascii-upper value)))
+            (buffer/push! out value))))
+      (string out))))
+
+(defn- push-scopes
+  "Returns scopes with the scopes in name, which may be nil, added."
+  [scopes name]
+  (if (or (nil? name) (empty? name))
+    scopes
+    (reduce conj scopes (filter #(not (empty? $)) (string/split " " name)))))
+
+(def- special ",.*+?^$|-\\{}[]()# \t\n")
+
+(defn- escape-regex [s]
+  (def out !"")
+  (each b s
+    (when (string/find (string/from-bytes b) special)
+      (buffer/push! out "\\"))
+    (buffer/push-byte! out b))
+  (string out))
+
+(def- end-peg (peg/compile ['any ['+ ['group ['* "\\" digits]] ['<- 1]]]))
+
+(defn- resolve-end
+  "Substitutes the text that caps captured for the backreferences in end."
+  [end text caps]
+  (string/join "" (map #(if (string? $)
+                          $
+                          (escape-regex (or (captured text caps (first $)) "")))
+                       (peg/match end-peg end))))
+
+; The stack
+
+(defn- push [stack rule enter anchor eol? end name-scopes content-scopes]
+  {:rule rule :enter enter :anchor anchor :eol? eol? :end end
+   :name-scopes name-scopes :content-scopes content-scopes :parent stack})
+
+(defn- same-rule?
+  "Returns true if stack, or a parent entered at the same position, has the rule of other."
+  [stack other]
+  (var el stack)
+  (var found false)
+  (while (and el (not found) (= (el :enter) (other :enter)))
+    (when (= (el :rule) (other :rule))
+      (set found true))
+    (set el (el :parent)))
+  found)
+
+(defn- reset
+  "Returns stack with the positions of each element cleared, for a new line."
+  [stack]
+  (when stack
+    (assoc stack :enter -1 :anchor -1 :parent (reset (stack :parent)))))
+
+; Tokenizing
+
+(defn- produce [lt scopes end]
+  (when (> end (lt :last))
+    (array/push! (lt :tokens) [(lt :last) end scopes])
+    (put! lt :last end)))
+
+(var- tokenize-string nil)
+
+(defn- handle-captures [g text first-line? stack lt captures caps]
+  (when captures
+    (def n (min (length captures) (length caps)))
+    (def local ![])
+    (def max-end (get (get caps 0) 1))
+    (var i 0)
+    (var stop false)
+    (while (and (< i n) (not stop))
+      (def cap (get captures i))
+      (def index (get caps i))
+      (cond
+        (or (nil? cap) (nil? index) (= (get index 0) (get index 1))) nil
+        (> (get index 0) max-end) (set stop true)
+        (do
+          (def [start end] index)
+          (while (and (not (empty? local)) (<= ((array/peek local) :end) start))
+            (def top (array/pop! local))
+            (produce lt (top :scopes) (top :end)))
+          (produce lt (if (empty? local) (stack :content-scopes) ((array/peek local) :scopes))
+                   start)
+          (if (cap :rule)
+            (do
+              (def name-scopes (push-scopes (stack :content-scopes) (resolve-name (cap :name) text caps)))
+              (def content-scopes (push-scopes name-scopes (resolve-name (cap :content-name) text caps)))
+              (tokenize-string g (string/slice text 0 end) (and first-line? (zero? start)) start
+                               (push stack (cap :rule) start -1 false nil name-scopes content-scopes)
+                               lt false nil))
+            (when-let [name (resolve-name (cap :name) text caps)]
+              (def base (if (empty? local) (stack :content-scopes) ((array/peek local) :scopes)))
+              (array/push! local {:scopes (push-scopes base name) :end end})))))
+      (++ i))
+    (while (not (empty? local))
+      (def top (array/pop! local))
+      (produce lt (top :scopes) (top :end)))))
+
+(set tokenize-string
+  (fn [g text first-line? pos stack lt deadline start-anchor]
+    (def len (length text))
+    (var stack stack)
+    (var pos pos)
+    (var first-line? first-line?)
+    (var anchor (if (nil? start-anchor) (if (stack :eol?) 0 -1) start-anchor))
+    (var stop false)
+    (while (not stop)
+      (when (and deadline (> (os/clock :monotonic) deadline))
+        (error "time limit"))
+      (def rule (get (g :rules) (stack :rule)))
+      (def s (scanner g (stack :rule) (when (= :begin-end (rule :kind)) (or (stack :end) (rule :end)))
+                      first-line? (= pos anchor)))
+      (def r (onig/scan (s :scanner) text pos))
+      (if (nil? r)
+        (do
+          (produce lt (stack :content-scopes) len)
+          (set stop true))
+        (do
+          (def [index caps] r)
+          (def id (get (s :ids) index))
+          (def [start end] (get caps 0))
+          (def advanced? (> end pos))
+          (if (= id end-id)
+            (do
+              (def popped-rule rule)
+              (produce lt (stack :content-scopes) start)
+              (set stack (assoc stack :content-scopes (stack :name-scopes)))
+              (handle-captures g text first-line? stack lt (popped-rule :end-captures) caps)
+              (produce lt (stack :content-scopes) end)
+              (def popped stack)
+              (set stack (stack :parent))
+              (set anchor (popped :anchor))
+              (when (and (not advanced?) (= (popped :enter) pos))
+                ; The grammar pushed and popped a rule without advancing.
+                (set stack popped)
+                (produce lt (stack :content-scopes) len)
+                (set stop true)))
+            (do
+              (def matched (get (g :rules) id))
+              (produce lt (stack :content-scopes) start)
+              (def before stack)
+              (def name-scopes (push-scopes (stack :content-scopes)
+                                            (resolve-name (matched :name) text caps)))
+              (set stack (push stack id pos anchor (= end len) nil name-scopes name-scopes))
+              (if (or (= :begin-end (matched :kind)) (= :begin-while (matched :kind)))
+                (do
+                  (handle-captures g text first-line? stack lt (matched :begin-captures) caps)
+                  (produce lt (stack :content-scopes) end)
+                  (set anchor end)
+                  (set stack (assoc stack :content-scopes
+                                    (push-scopes name-scopes (resolve-name (matched :content-name) text caps))))
+                  (when (matched :end-backrefs?)
+                    (set stack (assoc stack :end (resolve-end (matched :end) text caps))))
+                  (when (matched :while-backrefs?)
+                    (set stack (assoc stack :end (resolve-end (matched :while) text caps))))
+                  (when (and (not advanced?) (same-rule? before stack))
+                    ; The grammar pushed the same rule without advancing.
+                    (set stack (stack :parent))
+                    (produce lt (stack :content-scopes) len)
+                    (set stop true)))
+                (do
+                  (handle-captures g text first-line? stack lt (matched :captures) caps)
+                  (produce lt (stack :content-scopes) end)
+                  (set stack (stack :parent))
+                  (unless advanced?
+                    ; The grammar is not advancing, nor pushing or popping.
+                    (set stack (or (stack :parent) stack))
+                    (produce lt (stack :content-scopes) len)
+                    (set stop true))))))
+          (when (> end pos)
+            (set pos end)
+            (set first-line? false)))))
+    stack))
+
+(defn- while-scanner
+  "Returns the scanner for the while regex source, as scanner does for a rule."
+  [g source a? g?]
+  (def key [:while source a? g?])
+  (or (get (g :scanners) key)
+      (do
+        (check g source)
+        (def s (onig/scanner [(resolve-anchors source a? g?)]))
+        (put! (g :scanners) key s)
+        s)))
+
+(defn- check-while
+  """
+  Checks the begin/while rules open in stack at the start of a line, from
+  the outermost in, as vscode-textmate does. A rule whose while regex does
+  not match is closed, with every rule inside it. Returns the stack, the
+  position after the while matches and the anchor, for tokenize-string.
+  """
+  [g text first-line? stack lt]
+  (def whiles ![])
+  (var el stack)
+  (while el
+    (when (= :begin-while ((get (g :rules) (el :rule)) :kind))
+      (array/insert! whiles 0 el))
+    (set el (el :parent)))
+  (var stack stack)
+  (var pos 0)
+  (var anchor (if (stack :eol?) 0 -1))
+  (var first-line? first-line?)
+  (var stop false)
+  (each el whiles
+    (unless stop
+      (def rule (get (g :rules) (el :rule)))
+      (def r (onig/scan (while-scanner g (or (el :end) (rule :while)) first-line? (= pos anchor))
+                        text pos))
+      (if (nil? r)
+        (do
+          (set stack (el :parent))
+          (set stop true))
+        (let [[_ caps] r
+              [start end] (get caps 0)]
+          (produce lt (el :content-scopes) start)
+          (handle-captures g text first-line? el lt (rule :while-captures) caps)
+          (produce lt (el :content-scopes) end)
+          (set anchor end)
+          (when (> end pos)
+            (set pos end)
+            (set first-line? false))))))
+  [stack pos anchor first-line?])
+
+; Grammars
+
+(defn decode
+  """
+  Returns the TextMate grammar decoded from the JSON text. Raises an error if
+  the text is not a grammar.
+  """
+  [text]
+  (def raw (json/decode text))
+  (assert (and (map? raw) (string? (get raw "scopeName"))) "not a TextMate grammar")
+  raw)
+
+(defn load
+  """
+  Returns the grammar for raw, a decoded TextMate grammar. registry maps the
+  scope names of other decoded grammars to them, for the grammars that raw
+  includes. Injections are not supported and are ignored.
+  """
+  [raw & {:keys [registry] :or {registry {}}}]
+  (def g !{:raw raw
+           :scope-name (get raw "scopeName")
+           :file-types (vec (filter string? (or (get raw "fileTypes") [])))
+           :registry registry
+           :rules ![]
+           :ids !{}
+           :regexes !{}
+           :scanners !{}
+           :warned !{}})
+  (put! g :root (rule-id g raw (repository raw raw)))
+  g)
+
+(defn tokenize
+  """
+  Returns the tokens of each line of the string content as a vector, each a
+  vector of [start end scopes] for one line, with the positions relative to
+  the start of the line and scopes a vector of scope names, outermost first.
+  Raises an error if tokenizing takes longer than the time limit, in seconds.
+  """
+  [g content & {:keys [time-limit]}]
+  (def deadline (when time-limit (+ (os/clock :monotonic) time-limit)))
+  (def scope [(g :scope-name)])
+  (var stack (push nil (g :root) -1 -1 false nil scope scope))
+  (def out ![])
+  (def lines (string/split "\n" content))
+  (when (= "" (last lines))
+    (array/pop! lines))
+  (var first-line? true)
+  (each line lines
+    (def lt !{:tokens ![] :last 0})
+    (def text (string line "\n"))
+    (def [stack* pos anchor first?] (check-while g text first-line?
+                                                  (if first-line? stack (reset stack)) lt))
+    (set stack (tokenize-string g text first? pos stack* lt deadline anchor))
+    (set first-line? false)
+    ; The token for the newline is not part of the line.
+    (array/push! out (vec (keep (fn [[s e scopes]]
+                                  (when (< s (length line))
+                                    [s (min e (length line)) scopes]))
+                                (lt :tokens)))))
+  (vec out))

@@ -1,0 +1,68 @@
+(import ../deps/gum/test :prefix "")
+
+(import ../lib/hiccup)
+
+(defn- message [f]
+  (try (do (f) nil) ([e] e)))
+
+(deftest text-is-escaped
+  (is (== "<p>a &lt; b &amp; &quot;c&quot; &gt; d</p>"
+          (hiccup/html [:p "a < b & \"c\" > d"]))))
+
+(deftest numbers-nil-and-false
+  (is (== "<p>1.5</p>" (hiccup/html [:p 1.5 nil false]))))
+
+(deftest attributes
+  (is (== "<a class=\"x\" href=\"/a?b=1&amp;c=&quot;2&quot;\">t</a>"
+          (hiccup/html [:a {:href "/a?b=1&c=\"2\"" :class "x"} "t"]))))
+
+(deftest attributes-in-sorted-order
+  (is (== "<meta content=\"c\" name=\"n\" property=\"p\">"
+          (hiccup/html [:meta {:property "p" :name "n" :content "c"}]))))
+
+(deftest boolean-and-missing-attributes
+  (is (== "<input checked type=\"checkbox\">"
+          (hiccup/html [:input {:type "checkbox" :checked true :disabled false :value nil}]))))
+
+(deftest classes-from-tag-and-attributes
+  (is (== "<div class=\"post wide x y\"></div>"
+          (hiccup/html [:div.post.wide {:class ["x" nil "y"]}])))
+  (is (== "<div class=\"post\"></div>" (hiccup/html [:div.post]))))
+
+(deftest id-from-tag
+  (is (== "<div class=\"post wide\" id=\"main\"></div>"
+          (hiccup/html [:div#main.post.wide])))
+  (is (== "<p class=\"a b\" id=\"x\"></p>" (hiccup/html [:p.a#x.b])))
+  (is (== "<p id=\"y\"></p>" (hiccup/html [:p#x {:id "y"}]))))
+
+(deftest void-elements
+  (is (== "<br><hr><img src=\"a.png\"><link href=\"/f\" rel=\"alternate\">"
+          (hiccup/html [:br] [:hr] [:img {:src "a.png"}] [:link {:rel "alternate" :href "/f"}])))
+  (is (== "<br> cannot have children" (message #(hiccup/html [:br "x"])))))
+
+(deftest sequences-are-spliced
+  (is (== "<ul><li>1</li><li>2</li><li>3</li></ul>"
+          (hiccup/html [:ul (map #(do [:li $]) [1 2]) [[:li 3]]]))))
+
+(deftest raw-html
+  (is (== "<section><p>a &amp; b</p></section>"
+          (hiccup/html [:section (hiccup/raw "<p>a &amp; b</p>")]))))
+
+(deftest html5-doctype
+  (is (== "<!doctype html>\n<html lang=\"en\"></html>"
+          (hiccup/html5 [:html {:lang "en"}]))))
+
+(deftest xml-self-closes
+  (is (== "<feed><link href=\"/f\"/><br>x</br><title></title></feed>"
+          (hiccup/xml [:feed [:link {:href "/f"}] [:br "x"] [:title ""]]))))
+
+(deftest escape
+  (is (== "&lt;b&gt; &amp;amp;" (hiccup/escape "<b> &amp;"))))
+
+(deftest errors
+  (is (== "cannot write {:a 1} as HTML" (message #(hiccup/html {:a 1}))))
+  (is (== "invalid tag :p." (message #(hiccup/html [:p.]))))
+  (is (== "invalid tag :p#.a" (message #(hiccup/html [:p#.a]))))
+  (is (== "tag :p#a#b has more than one ID" (message #(hiccup/html [:p#a#b])))))
+
+(run-tests!)

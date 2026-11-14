@@ -1,0 +1,243 @@
+; Front matter is YAML between two lines of `---` at the start of a file.
+; Ecstatic parses the subset of YAML that its sites use:
+;
+; - `key: value` pairs, where a key is letters, digits, `_` and `-`
+; - plain scalars, which are strings unless they read as `null`, `~`, `true`,
+;   `false` or a decimal number
+; - double-quoted strings with the escapes `\\`, `\"`, `\/`, `\n`, `\r`,
+;   `\t`, `\0`, `\xHH` and `\uXXXX`, and single-quoted strings with `''`
+; - flow lists of scalars, as in `[a, "b"]`
+; - a key with no value followed by more indented pairs, which is a nested map
+; - literal block scalars, `|`, `|-` and `|+`
+; - comments, from a `#` at the start of a line or after a space
+;
+; Dates are left as strings. A key that appears twice takes its last value.
+; Anything else raises an error that names the line.
+
+(defn- hex->utf8
+  "Returns the UTF-8 encoding of the code point written in hex."
+  [hex]
+  (def cp (scan-number hex 16))
+  (def b !"")
+  (cond
+    (< cp 0x80) (buffer/push-byte! b cp)
+    (< cp 0x800) (buffer/push-byte! b
+                                    (bor 0xC0 (brshift cp 6))
+                                    (bor 0x80 (band cp 0x3F)))
+    (< cp 0x10000) (buffer/push-byte! b
+                                      (bor 0xE0 (brshift cp 12))
+                                      (bor 0x80 (band (brshift cp 6) 0x3F))
+                                      (bor 0x80 (band cp 0x3F)))
+    (buffer/push-byte! b
+                       (bor 0xF0 (brshift cp 18))
+                       (bor 0x80 (band (brshift cp 12) 0x3F))
+                       (bor 0x80 (band (brshift cp 6) 0x3F))
+                       (bor 0x80 (band cp 0x3F))))
+  (string b))
+
+(defn- hex->byte [hex]
+  (string/from-bytes (scan-number hex 16)))
+
+(defn resolve-plain
+  """
+  Returns the value of the plain scalar s: nil for `null`, `Null`, `NULL`,
+  `~` or an empty string, a boolean for `true` or `false` in the same cases,
+  a number for a decimal integer or real, and otherwise s.
+  """
+  [s]
+  (cond
+    (has-value? ["" "~" "null" "Null" "NULL"] s) nil
+    (has-value? ["true" "True" "TRUE"] s) true
+    (has-value? ["false" "False" "FALSE"] s) false
+    (peg/match '(* (? "-") (some :d) (? (* "." (some :d))) -1) s) (scan-number s)
+    s))
+
+(def- rules
+  `{:ws (any (set " \t"))
+    :comment (* (some (set " \t")) "#" (any 1))
+    :end (* (+ :comment :ws) -1)
+    :escape (+ (* "\\" (constant "\\"))
+               (* "\"" (constant "\""))
+               (* "/" (constant "/"))
+               (* "n" (constant "\n"))
+               (* "r" (constant "\r"))
+               (* "t" (constant "\t"))
+               (* "0" (constant "\x00"))
+               (* "x" (/ (<- (2 :h)) ~hex->byte))
+               (* "u" (/ (<- (4 :h)) ~hex->utf8)))
+    :dq (* "\"" (% (any (+ (* "\\" :escape)
+                           (<- (some (if-not (set "\"\\") 1))))))
+           "\"")
+    :sq (* "'" (% (any (+ (* "''" (constant "'"))
+                          (<- (some (if-not "'" 1))))))
+           "'")
+    :item-plain (/ (<- (some (if-not (+ (set ",]") (* :ws (+ (set ",]") -1))) 1)))
+                   ~resolve-plain)
+    :item (+ :dq :sq :item-plain)
+    :items (? (* :item (any (* :ws "," :ws :item)) :ws (? ",")))
+    :list (/ (group (* "[" :ws :items :ws "]")) ~(fn [xs] (vector |xs)))
+    :scalar (+ :dq :sq :list)})
+
+(def- value-grammar
+  (peg/compile (assoc rules :main '(* :scalar :end))))
+
+(def- key-grammar
+  (peg/compile
+    '{:main (* (<- (some (+ :w (set "_-")))) ":"
+               (+ (* (some (set " \t")) (<- (any 1)))
+                  (* -1 (constant ""))))}))
+
+(defn- fail [n msg]
+  (errorf "front matter line %d: %s" (inc n) msg))
+
+(defn- indent-of [line]
+  (- (length line) (length (string/triml line " "))))
+
+(defn- skip? [line]
+  (def t (string/trim line))
+  (or (empty? t) (string/has-prefix? "#" t)))
+
+(defn- strip-comment
+  "Removes a comment that starts after a space or tab from the plain scalar s."
+  [s]
+  (def i (or (string/find " #" s) (string/find "\t#" s)))
+  (string/trim (if i (string/slice s 0 i) s)))
+
+(defn- parse-value [s n]
+  (def c (string/slice s 0 1))
+  (cond
+    (= "\"" c) (or (first (peg/match value-grammar s))
+                   (fail n "invalid double-quoted string"))
+    (= "'" c) (or (first (peg/match value-grammar s))
+                  (fail n "invalid single-quoted string"))
+    (= "[" c) (or (first (peg/match value-grammar s))
+                  (fail n "invalid list"))
+    (or (has-value? ["{" "&" "*" "!" ">" "@" "`" "%"] c)
+        (= "-" s)
+        (string/has-prefix? "- " s))
+    (fail n (string "unsupported syntax: " s))
+    (resolve-plain (strip-comment s))))
+
+(defn- next-line
+  "Returns the index of the first line from i that is not blank or a comment."
+  [lines i]
+  (var j i)
+  (while (and (< j (length lines)) (skip? (lines j)))
+    (++ j))
+  j)
+
+(defn- parse-block
+  """
+  Parses the literal block scalar whose lines start at i and are indented
+  more than indent. Returns the string and the index of the next line.
+  """
+  [lines i indent chomp]
+  (def first-i (next-line lines i))
+  (def block-indent (if (< first-i (length lines)) (indent-of (lines first-i)) 0))
+  (def out ![])
+  (var j i)
+  (if (<= block-indent indent)
+    (set j first-i)
+    (while (< j (length lines))
+      (def line (lines j))
+      (cond
+        (empty? (string/trim line)) (array/push! out "")
+        (< (indent-of line) block-indent) (break)
+        (array/push! out (string/slice line block-indent)))
+      (++ j)))
+  ; Trailing blank lines belong to the block only for `|+`. Lines after the
+  ; block that are blank stay unread so that the caller skips them.
+  (var content-end (length out))
+  (while (and (pos? content-end) (empty? (out (dec content-end))))
+    (-- content-end))
+  (def text (string/join "\n" (array/slice out 0 content-end)))
+  (def value
+    (case chomp
+      "-" text
+      "+" (string text (string/repeat "\n" (inc (- (length out) content-end))))
+      (if (empty? text) "" (string text "\n"))))
+  [value j])
+
+(defn- parse-map
+  """
+  Parses the pairs at indent, starting at line i. Returns the map and the
+  index of the first line that is not part of it.
+  """
+  [lines i indent]
+  (var m {})
+  (var i i)
+  (while (< i (length lines))
+    (def line (lines i))
+    (cond
+      (skip? line) (++ i)
+      (< (indent-of line) indent) (break)
+      (> (indent-of line) indent) (fail i "unexpected indentation")
+      (do
+        (def kv (peg/match key-grammar (string/slice line indent)))
+        (unless kv
+          (fail i "expected key: value"))
+        (def [k raw] kv)
+        (def rest (string/trim raw))
+        (cond
+          (peg/match '(* "|" (? (set "+-")) -1) (strip-comment rest))
+          (let [chomp (string/slice (strip-comment rest) 1)
+                [v j] (parse-block lines (inc i) indent chomp)]
+            (set m (assoc m (keyword k) v))
+            (set i j))
+          (empty? (strip-comment rest))
+          (let [j (next-line lines (inc i))]
+            (when (and (< j (length lines))
+                       (string/has-prefix? "- " (string/triml (lines j))))
+              (fail j "block lists are not supported"))
+            (if (and (< j (length lines)) (> (indent-of (lines j)) indent))
+              (let [[sub after] (parse-map lines j (indent-of (lines j)))]
+                (set m (assoc m (keyword k) sub))
+                (set i after))
+              (do
+                (set m (dissoc m (keyword k)))
+                (++ i))))
+          (do
+            (set m (assoc m (keyword k) (parse-value rest i)))
+            (++ i))))))
+  [m i])
+
+(defn parse
+  """
+  Parses the front matter text and returns a map with keyword keys. A key
+  whose value is null is left out.
+  """
+  [text]
+  (def lines (map #(string/trimr $ "\r") (string/split "\n" text)))
+  ; A final line break ends the last line rather than starting another.
+  (when (and (not (empty? lines)) (empty? (last lines)))
+    (array/pop! lines))
+  (first (parse-map lines 0 0)))
+
+(def- opening
+  (peg/compile '(* "---" (any (set " \t")) (+ "\r\n" "\n") ($))))
+
+(defn split
+  """
+  Splits text into its front matter and body. Returns a vector of the front
+  matter text and the body, or nil if text does not begin with a line of
+  `---` and contain a closing line of `---` or `...`.
+  """
+  [text]
+  (when-let [[start] (peg/match opening text)]
+    (var pos start)
+    (var result nil)
+    (while (and (nil? result) (< pos (length text)))
+      (def eol (or (string/find "\n" text pos) (length text)))
+      (def line (string/trimr (string/slice text pos eol) " \t\r"))
+      (if (or (= line "---") (= line "..."))
+        (set result [(string/slice text start pos)
+                     (string/slice text (min (length text) (inc eol)))])
+        (set pos (inc eol))))
+    result))
+
+(defn has-front-matter?
+  "Returns true if the file at path begins with a line of `---`."
+  [path]
+  (def head (with [f (file/open path :rb)] (file/read f 5)))
+  (and head (not (nil? (peg/match '(* "---" (any (set " \t")) (+ "\n" "\r\n" -1))
+                                  head)))))

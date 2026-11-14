@@ -1,0 +1,115 @@
+; Feeds: Atom, RSS 2.0 and JSON Feed.
+;
+; `atom` and `rss` take a map describing the feed and its entries, with dates
+; in seconds since the epoch, written at the map's `:offset` (in seconds).
+; Content is HTML, which is escaped in the XML. `json` writes any value as
+; JSON with the keys of maps in sorted order, so that a JSON Feed is the same
+; on each run.
+
+(import ./date)
+(import ./hiccup)
+
+(def- xml-declaration "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n")
+
+(defn atom
+  """
+  Returns an Atom feed for spec, a map with `:title`, `:subtitle`, `:url` (of
+  the site), `:feed-url`, `:id`, `:updated`, `:offset`, `:rights`, `:author`,
+  `:lang` (of the entries' content) and `:entries`. Each entry is a map with `:title`, `:url`, `:id`,
+  `:published`, `:updated`, `:author`, `:summary` (text) and `:content`
+  (HTML). Keys that are nil are left out.
+  """
+  [spec]
+  (def offset (get spec :offset 0))
+  (defn when-date [tag t] (when t [tag (date/rfc3339 t offset)]))
+  (defn when-text [tag s] (when s [tag s]))
+  (defn author [name] (when name [:author [:name name]]))
+  (string
+    xml-declaration
+    (hiccup/xml
+      [:feed {:xmlns "http://www.w3.org/2005/Atom"}
+       (when-text :title (spec :title))
+       (when-text :subtitle (spec :subtitle))
+       (when (spec :url) [:link {:rel "alternate" :type "text/html" :href (spec :url)}])
+       (when (spec :feed-url)
+         [:link {:rel "self" :type "application/atom+xml" :href (spec :feed-url)}])
+       (when-text :id (spec :id))
+       (when-date :updated (spec :updated))
+       (when-text :rights (spec :rights))
+       (author (spec :author))
+       (map (fn [e]
+              [:entry
+               (when-text :title (e :title))
+               (when (e :url) [:link {:rel "alternate" :type "text/html" :href (e :url)}])
+               (when-text :id (e :id))
+               (when-date :published (e :published))
+               (when-date :updated (e :updated))
+               (author (e :author))
+               (when (e :summary) [:summary {:type "text"} (e :summary)])
+               (when (e :content)
+                 [:content {:type "html" :xml:base (spec :url) :xml:lang (spec :lang)}
+                  (e :content)])])
+            (get spec :entries []))])
+    "\n"))
+
+(defn rss
+  """
+  Returns an RSS 2.0 feed for spec, a map with `:title`, `:description`,
+  `:link`, `:pub-date`, `:last-build-date`, `:offset` and `:items`. Each item
+  is a map with `:title`, `:description` (HTML), `:pub-date`, `:link` and
+  `:guid`, which is a permalink. Keys that are nil are left out.
+  """
+  [spec]
+  (def offset (get spec :offset 0))
+  (defn when-date [tag t] (when t [tag (date/rfc822 t offset)]))
+  (defn when-text [tag s] (when s [tag s]))
+  (string
+    xml-declaration
+    (hiccup/xml
+      [:rss {:version "2.0"}
+       [:channel
+        (when-text :title (spec :title))
+        (when-text :description (spec :description))
+        (when-text :link (spec :link))
+        (when-date :pubDate (spec :pub-date))
+        (when-date :lastBuildDate (spec :last-build-date))
+        (map (fn [i]
+               [:item
+                (when-text :title (i :title))
+                (when-text :description (i :description))
+                (when-date :pubDate (i :pub-date))
+                (when-text :link (i :link))
+                (when (i :guid) [:guid {:isPermaLink "true"} (i :guid)])])
+             (get spec :items []))]])
+    "\n"))
+
+(defn- write-json [buf v]
+  (cond
+    (dictionary? v)
+    (let [ks (sort (filter #(not (nil? (v $))) (keys v)))]
+      (buffer/push! buf "{")
+      (each [i k] (pairs ks)
+        (when (pos? i) (buffer/push! buf ","))
+        (buffer/push! buf (json/encode (string k)) ":")
+        (write-json buf (v k)))
+      (buffer/push! buf "}"))
+    (and (indexed? v) (not (bytes? v)))
+    (do
+      (buffer/push! buf "[")
+      (each [i x] (pairs v)
+        (when (pos? i) (buffer/push! buf ","))
+        (write-json buf x))
+      (buffer/push! buf "]"))
+    (keyword? v) (buffer/push! buf (json/encode (string v)))
+    (buffer/push! buf (json/encode v))))
+
+(defn json
+  """
+  Returns v as JSON. The keys of maps and tables are written in sorted order
+  and keys whose values are nil are left out. Keywords are written as
+  strings.
+  """
+  [v]
+  (def buf !"")
+  (write-json buf v)
+  (string buf "\n"))

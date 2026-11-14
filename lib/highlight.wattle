@@ -1,0 +1,82 @@
+; Highlighting of code with TextMate grammars, using the engine copied from
+; Augite.
+
+(import ./hiccup)
+(import ./hl/classes)
+(import ./hl/engine)
+
+; Code larger than this, in bytes, is not highlighted.
+(def- max-size (* 512 1024))
+
+; The seconds that highlighting one block of code may take.
+(def- time-limit 5)
+
+(defn load-grammars
+  """
+  Returns a map of the scope names of the TextMate grammars in the directory
+  dir, the files ending in `.json` that are not hidden, to the grammars. A
+  grammar can include the others. Raises an error that names the file if a
+  grammar cannot be loaded.
+  """
+  [dir]
+  (assertf (= :directory (os/stat dir :mode)) "not a directory: %s" dir)
+  (def raws (keep (fn [name]
+                    (when (and (string/has-suffix? ".json" name)
+                               (not (string/has-prefix? "." name)))
+                      (def path (string dir "/" name))
+                      (try
+                        [path (engine/decode (slurp path))]
+                        ([e] (errorf "%s: %s" path e)))))
+                  (sort (os/dir dir))))
+  (def registry (from-pairs (map (fn [[_ raw]] [(get raw "scopeName") raw]) raws)))
+  (from-pairs (map (fn [[path raw]]
+                     (try
+                       [(get raw "scopeName") (engine/load raw :registry registry)]
+                       ([e] (errorf "%s: %s" path e))))
+                   raws)))
+
+(defn- line-html [line tokens]
+  (def out !"")
+  (var pos 0)
+  (var open nil)
+  (defn push-text [class text]
+    (unless (= class open)
+      (when open (buffer/push! out "</span>"))
+      (when class (buffer/push! out "<span class=\"" class "\">"))
+      (set open class))
+    (buffer/push! out (hiccup/escape text)))
+  (each [start end scopes] tokens
+    (when (> start pos)
+      (push-text nil (string/slice line pos start)))
+    (push-text (classes/class-of scopes) (string/slice line start end))
+    (set pos end))
+  (when (< pos (length line))
+    (push-text nil (string/slice line pos)))
+  (when open (buffer/push! out "</span>"))
+  (string out))
+
+(defn- split-lines [code]
+  (def lines (string/split "\n" code))
+  (when (= "" (last lines))
+    (array/pop! lines))
+  lines)
+
+(defn lines
+  """
+  Returns a vector of the HTML of each line of code, highlighted with
+  grammar, without line breaks. Each token is a `<span>` with the class of
+  its scopes (see `lib/hl/classes.wattle`). With no grammar, or if code is
+  larger than the size limit, each line is only escaped. If highlighting
+  fails or takes longer than the time limit, each line is only escaped and a
+  warning is printed.
+  """
+  [grammar code]
+  (def ls (split-lines code))
+  (defn plain [] (vec (map hiccup/escape ls)))
+  (if (or (nil? grammar) (> (length code) max-size))
+    (plain)
+    (try
+      (vec (map line-html ls (engine/tokenize grammar code :time-limit time-limit)))
+      ([e]
+        (eprint "ecstatic: warning: not highlighted: " e)
+        (plain)))))

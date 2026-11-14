@@ -1,0 +1,233 @@
+(import ./content)
+(import ./date)
+(import ./fs)
+(import ./git)
+(import ./markdown)
+(import ./theme)
+
+(var- quiet-output? false)
+
+(defn- log [& xs]
+  (unless quiet-output?
+    (prin |xs)
+    (flush)))
+
+(defn- check-page
+  """
+  Returns the path of page, a map with `:path` and `:body`. Raises an error if
+  the path is missing, absolute or leads outside the destination, or if the
+  body is not a string or buffer.
+  """
+  [page]
+  (unless (dictionary? page)
+    (errorf "expected a page, got %q" page))
+  (def path (get page :path))
+  (unless (and (string? path) (not (empty? path)))
+    (errorf "page has no path: %q" page))
+  (when (or (string/has-prefix? "/" path)
+            (has-value? (string/split "/" path) ".."))
+    (errorf "page path %s is outside the destination" path))
+  (def body (get page :body))
+  (unless (or (string? body) (buffer? body))
+    (errorf "page %s has no body" path))
+  path)
+
+(defn- plural [n word]
+  (string n " " word (if (= 1 n) "" "s")))
+
+(defn- post-url
+  """
+  Returns the URL of post: from the post's `permalink` front matter if it has
+  one, otherwise from the theme's `permalink` function if it defines one,
+  otherwise from `content/default-permalink`.
+  """
+  [post permalink offset]
+  (def url (cond
+             (get-in post [:front-matter :permalink])
+             (string (get-in post [:front-matter :permalink]))
+             permalink (permalink post)
+             (content/default-permalink post offset)))
+  (unless (string? url)
+    (errorf "permalink for %s is %q, not a string" (post :path) url))
+  (if (string/has-prefix? "/" url) url (string "/" url)))
+
+(defn- convert
+  """
+  Returns item, a post or page, with `:html`, its content converted from
+  Markdown if its path has a Markdown extension and otherwise unchanged, and
+  `:excerpt`, its `excerpt` front matter or, for Markdown, the HTML of its
+  first paragraph.
+  """
+  [item md]
+  (def markdown? (content/markdown? (item :path)))
+  (def render #(try (markdown/render $ md)
+                 ([e] (errorf "%s: %s" (item :path) e))))
+  (assoc item
+         :html (if markdown? (render (item :content)) (item :content))
+         :excerpt (or (get-in item [:front-matter :excerpt])
+                      (when markdown?
+                        (render (markdown/excerpt-source (item :content)))))))
+
+(def default-keep
+  "The paths in the destination that a build keeps unless the theme says otherwise."
+  [".git" ".gitkeep" ".svn"])
+
+(defn- staging-paths
+  """
+  Returns the directories beside destination that a build writes to and
+  moves the previous site to: `.<name>.ecstatic-new` and
+  `.<name>.ecstatic-old`.
+  """
+  [destination]
+  (def dir (string/trimr destination "/"))
+  (def parent (or (fs/parent dir) "."))
+  (def name (fs/basename dir))
+  [(string parent "/." name ".ecstatic-new")
+   (string parent "/." name ".ecstatic-old")])
+
+(defn- check-destination
+  """
+  Raises an error if destination is a file, or if it is source or contains it,
+  since replacing destination would then remove the source.
+  """
+  [source destination]
+  (def mode (os/stat destination :mode))
+  (when (and mode (not= :directory mode))
+    (errorf "destination %s is not a directory" destination))
+  (when mode
+    (def src (string (os/realpath source) "/"))
+    (def dest (string (os/realpath destination) "/"))
+    (when (string/has-prefix? dest src)
+      (errorf "destination %s contains the source %s" destination source))))
+
+(defn- keep-moves
+  """
+  Returns the pairs of paths to move from destination to staged for the paths
+  in keep that exist in destination. Raises an error if staged has any of
+  them, since the site wrote it.
+  """
+  [staged destination keep]
+  (def moves ![])
+  (each path keep
+    (def from (string destination "/" path))
+    (when (os/lstat from :mode)
+      (def to (string staged "/" path))
+      (when (os/lstat to :mode)
+        (errorf "the site writes %s, which the destination keeps" path))
+      (array/push! moves [from to])))
+  moves)
+
+(defn- replace-destination
+  """
+  Replaces destination with staged. The paths in keep are first moved from
+  destination into staged, after checking that staged has none of them. The
+  previous site is moved to old and removed only after staged is in place, so
+  destination is missing for no more than the moment between two renames.
+  staged gets the permissions of destination.
+
+  Once a kept path has moved, nothing is removed if a step fails: the error
+  says where the previous site and the new one are.
+  """
+  [staged destination old keep]
+  (when (os/stat destination :mode)
+    (def moves (keep-moves staged destination keep))
+    (try
+      (do
+        (each [from to] moves
+          (when-let [dir (fs/parent to)]
+            (fs/mkdirp dir))
+          (os/rename from to))
+        (os/chmod staged (os/stat destination :int-permissions))
+        (os/rename destination old))
+      ([e]
+        (errorf "could not replace %s (%s); the new site is in %s"
+                destination e staged))))
+  (try
+    (os/rename staged destination)
+    ([e]
+      (errorf "could not move %s to %s (%s); the previous site is in %s"
+              staged destination e old)))
+  (fs/rmrf old))
+
+(defn- add-modified
+  """
+  Returns item with `:modified`: the time of the last commit to change it, or
+  the time its file was modified if it has no commit.
+  """
+  [item source times]
+  (assoc item :modified (or (get times (item :path))
+                            (os/stat (string source "/" (item :path)) :modified))))
+
+(defn build
+  """
+  Builds the site in the directory source into the directory destination.
+
+  The site's posts, pages and static files are read with `content/read-site`.
+  The theme's `build` function is called with a map of the site and returns
+  the pages to write, each a map with `:path`, relative to destination, and
+  `:body`. The pages and the static files are written to a new directory
+  beside destination, which then replaces destination. The paths in the
+  configuration's `:keep` (by default `default-keep`) are moved from the old
+  destination to the new one.
+  """
+  [& {:keys [source destination quiet?]
+      :or {source "." destination "../public"}}]
+  (set quiet-output? quiet?)
+  (check-destination source destination)
+  (log "Loading theme from " source "/" theme/file-name "... ")
+  (def env (theme/load source))
+  (log "done\n")
+  (def config (or (theme/lookup env 'config) {}))
+  (log "Reading site from " source "... ")
+  (def {:keys [posts pages static]} (content/read-site source config))
+  (def offset (date/parse-offset (get config :offset "+0000")))
+  (def md (get config :markdown {}))
+  (def permalink (theme/lookup env 'permalink))
+  (def times (git/modified-times source))
+  (def prepare (fn [item] (convert (add-modified item source times) md)))
+  (def site {:config config
+             :source source
+             :destination destination
+             :revision (git/revision source)
+             :time (os/time)
+             :posts (vector |(map #(prepare (assoc $ :url (post-url $ permalink offset)))
+                                  posts))
+             :pages (vector |(map prepare pages))
+             :static static})
+  (log "done (" (plural (length posts) "post") ", " (plural (length pages) "page")
+       ", " (plural (length static) "static file") ")\n")
+  (log "Building pages... ")
+  (def outputs ((theme/lookup env 'build) site))
+  (unless (indexed? outputs)
+    (errorf "build returned %q, not a vector of pages" outputs))
+  (def written !{})
+  (each rel static
+    (put! written rel :static))
+  (each page outputs
+    (def path (check-page page))
+    (case (written path)
+      :static (errorf "page %s is also a static file" path)
+      :page (errorf "page %s is written twice" path))
+    (put! written path :page))
+  (log "done\n")
+  (def [staged old] (staging-paths destination))
+  (fs/rmrf staged)
+  (fs/rmrf old)
+  (fs/mkdirp staged)
+  ; Until the new site replaces the old one, a failure removes the new site.
+  (try
+    (do
+      (log "Writing " (plural (length outputs) "page") " to " destination "... ")
+      (each page outputs
+        (fs/write (string staged "/" (page :path)) (page :body)))
+      (log "done\n")
+      (log "Copying " (plural (length static) "static file") " to " destination "... ")
+      (each rel static
+        (fs/write (string staged "/" rel) (slurp (string source "/" rel))))
+      (log "done\n")
+      (keep-moves staged destination (get config :keep default-keep)))
+    ([e]
+      (fs/rmrf staged)
+      (error e)))
+  (replace-destination staged destination old (get config :keep default-keep))
+  (log "Done!\n"))

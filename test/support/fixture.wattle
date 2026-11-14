@@ -1,0 +1,20 @@
+; Builds sites for the tests. Each site is a directory of files written from a
+; map of relative paths to contents.
+
+(import ../../lib/fs)
+
+(def rmrf
+  "Removes path and, if it is a directory, everything under it."
+  fs/rmrf)
+
+(defn make-site
+  """
+  Replaces the directory dir with a site whose files are given by files, a
+  map of paths relative to dir to their contents. Returns dir.
+  """
+  [dir files]
+  (rmrf dir)
+  (fs/mkdirp dir)
+  (each [path content] (pairs files)
+    (fs/write (string dir "/" path) content))
+  dir)

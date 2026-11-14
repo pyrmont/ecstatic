@@ -1,0 +1,53 @@
+(import ../deps/gum/test :prefix "")
+
+(import ../lib/feed)
+
+; 2026-04-21 12:53:37 +0900
+(def- t 1776743617)
+
+(deftest atom-feed
+  (is (== (string
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
+            "<feed xmlns=\"http://www.w3.org/2005/Atom\">"
+            "<title>a &amp; b</title>"
+            "<link href=\"https://x.example\" rel=\"alternate\" type=\"text/html\"/>"
+            "<link href=\"https://x.example/feed.xml\" rel=\"self\" type=\"application/atom+xml\"/>"
+            "<id>https://x.example/feed.xml</id>"
+            "<updated>2026-04-21T12:53:37+09:00</updated>"
+            "<entry><title>T</title>"
+            "<link href=\"https://x.example/p.html\" rel=\"alternate\" type=\"text/html\"/>"
+            "<id>tag:x,2026-04-21:p</id>"
+            "<published>2026-04-21T12:53:37+09:00</published>"
+            "<author><name>M</name></author>"
+            "<summary type=\"text\">S</summary>"
+            "<content type=\"html\" xml:base=\"https://x.example\" xml:lang=\"en\">&lt;p&gt;Hi &amp; bye&lt;/p&gt;</content>"
+            "</entry></feed>\n")
+          (feed/atom {:title "a & b" :url "https://x.example"
+                      :feed-url "https://x.example/feed.xml"
+                      :id "https://x.example/feed.xml" :updated t :offset 32400 :lang "en"
+                      :entries [{:title "T" :url "https://x.example/p.html"
+                                 :id "tag:x,2026-04-21:p" :published t :author "M"
+                                 :summary "S" :content "<p>Hi & bye</p>"}]}))))
+
+(deftest rss-feed
+  (is (== (string
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
+            "<rss version=\"2.0\"><channel><title>R</title><link>https://u.example</link>"
+            "<pubDate>Tue, 21 Apr 2026 12:53:37 +0900</pubDate>"
+            "<item><title></title><description>&lt;p&gt;x&lt;/p&gt;</description>"
+            "<pubDate>Tue, 21 Apr 2026 12:53:37 +0900</pubDate>"
+            "<link>https://u.example/p</link>"
+            "<guid isPermaLink=\"true\">https://u.example/p</guid></item>"
+            "</channel></rss>\n")
+          (feed/rss {:title "R" :link "https://u.example" :pub-date t :offset 32400
+                     :items [{:title "" :description "<p>x</p>" :pub-date t
+                              :link "https://u.example/p" :guid "https://u.example/p"}]}))))
+
+(deftest json-sorts-keys-and-drops-nil
+  (is (== "{\"a\":[1,\"x\\\"\",false],\"b\":{\"c\":\"d\"},\"k\":\"v\"}\n"
+          (feed/json {:k :v :b {:c "d" :e nil} :a [1 "x\"" false] :n nil}))))
+
+(deftest json-of-tables-and-arrays
+  (is (== "{\"items\":[{\"id\":\"u\"}]}\n" (feed/json !{:items ![!{:id "u"}]}))))
+
+(run-tests!)

@@ -1,0 +1,133 @@
+(import ../deps/gum/test :prefix "")
+
+; This file tests the native module directly, so build it first with
+; `wattle build lib`.
+(import cmark)
+
+(def- footnotes (blshift 1 13))
+(def- smart (blshift 1 10))
+(def- unsafe (blshift 1 17))
+
+(defn- message [f]
+  (try (do (f) nil) ([e] e)))
+
+(defn- html [root]
+  (cmark/render-html root unsafe))
+
+(deftest parse-and-render
+  (is (== "<p>Hello <em>world</em></p>\n"
+          (cmark/render-html (cmark/parse "Hello *world*" 0) 0))))
+
+(deftest options
+  (is (== "<p>“Hi” – there…</p>\n"
+          (cmark/render-html (cmark/parse "\"Hi\" -- there..." smart) 0)))
+  (is (== "<p><b>raw</b></p>\n"
+          (cmark/render-html (cmark/parse "<b>raw</b>" 0) unsafe)))
+  (is (== "<p><!-- raw HTML omitted -->raw<!-- raw HTML omitted --></p>\n"
+          (cmark/render-html (cmark/parse "<b>raw</b>" 0) 0))))
+
+(deftest footnotes
+  (def root (cmark/parse "A[^1].\n\n[^1]: Note.\n" footnotes))
+  (is (== [:document :paragraph :text :footnote-reference :text
+           :footnote-definition :paragraph :text]
+          (map cmark/type (cmark/nodes root))))
+  (is (string/find "<section class=\"footnotes\"" (html root))))
+
+(deftest nodes-in-document-order
+  (def root (cmark/parse "# Title\n\n- a\n- *b*\n\n> quote\n" 0))
+  (is (== [:document :heading :text :list :item :paragraph :text :item
+           :paragraph :emph :text :block-quote :paragraph :text]
+          (map cmark/type (cmark/nodes root))))
+  (def item (get (cmark/nodes root) 7))
+  (is (== [:item :paragraph :emph :text] (map cmark/type (cmark/nodes item)))))
+
+(deftest children-and-parent
+  (def root (cmark/parse "a *b* c\n" 0))
+  (def para (first (cmark/children root)))
+  (is (== [:text :emph :text] (map cmark/type (cmark/children para))))
+  (is (cmark/same? root (cmark/parent para)))
+  (is (nil? (cmark/parent root)))
+  (is (not (cmark/same? root para))))
+
+(deftest accessors
+  (def root (cmark/parse "## T\n\n[x](/u \"t\") `c`\n\n```janet extra\n(+ 1 2)\n```\n" 0))
+  (def by-type (fn [t] (find #(= t (cmark/type $)) (cmark/nodes root))))
+  (is (= 2 (cmark/heading-level (by-type :heading))))
+  (is (nil? (cmark/heading-level root)))
+  (is (== "/u" (cmark/url (by-type :link))))
+  (is (== "t" (cmark/title (by-type :link))))
+  (is (== "c" (cmark/literal (by-type :code))))
+  (is (== "janet extra" (cmark/fence-info (by-type :code-block))))
+  (is (== "(+ 1 2)\n" (cmark/literal (by-type :code-block))))
+  (is (nil? (cmark/fence-info root)))
+  (is (nil? (cmark/literal root)))
+  (is (nil? (cmark/url root))))
+
+(deftest setters
+  (def root (cmark/parse "[x](/u) text\n" 0))
+  (def link (find #(= :link (cmark/type $)) (cmark/nodes root)))
+  (cmark/set-url! link "/v")
+  (cmark/set-title! link "T")
+  (cmark/set-literal! (first (cmark/children link)) "y")
+  (is (== "<p><a href=\"/v\" title=\"T\">y</a> text</p>\n" (html root)))
+  (is (== "cannot set the literal of a :link node"
+          (message #(cmark/set-literal! link "z")))))
+
+(deftest insert-and-unlink
+  (def root (cmark/parse "a\n\nb\n" 0))
+  (def [p1 p2] (cmark/children root))
+  (cmark/insert-before! p1 (cmark/set-literal! (cmark/new root :html-block) "<hr>\n"))
+  (cmark/unlink! p2)
+  (is (== "<hr>\n<p>a</p>\n" (html root)))
+  (cmark/insert-after! p1 p2)
+  (is (== "<hr>\n<p>a</p>\n<p>b</p>\n" (html root))))
+
+(deftest append-and-prepend
+  (def root (cmark/parse "b\n" 0))
+  (def para (first (cmark/children root)))
+  (cmark/prepend-child! para (cmark/set-literal! (cmark/new root :text) "a "))
+  (def strong (cmark/new root :strong))
+  (cmark/append-child! strong (cmark/set-literal! (cmark/new root :text) "c"))
+  (cmark/append-child! para strong)
+  (is (== "<p>a b<strong>c</strong></p>\n" (html root))))
+
+(deftest render-a-node
+  (def root (cmark/parse "a\n\n*b*\n" 0))
+  (is (== "<p><em>b</em></p>\n" (html (last (cmark/children root))))))
+
+(deftest edit-errors
+  (def root (cmark/parse "a\n" 0))
+  (def other (cmark/parse "b\n" 0))
+  (def para (first (cmark/children root)))
+  (is (== "cannot append a :paragraph node there"
+          (message #(cmark/append-child! (first (cmark/children para)) para))))
+  (is (== "cannot move a node to another document"
+          (message #(cmark/append-child! root (first (cmark/children other))))))
+  (is (== "cannot move a :document node" (message #(cmark/append-child! para root))))
+  (is (== "cannot unlink a :document node" (message #(cmark/unlink! root))))
+  (is (== "cannot make a :document node" (message #(cmark/new root :document))))
+  (is (== "unknown node type :nope" (message #(cmark/new root :nope)))))
+
+(deftest nodes-survive-collection
+  ; Unlinked and new nodes, and nodes whose document is unreachable but for
+  ; a handle, stay usable across collections, and freeing them all does not
+  ; crash.
+  (def kept ![])
+  (for i 0 200
+    (def root (cmark/parse (string "para " i "\n\nmore *" i "*\n") 0))
+    (def [p1 p2] (cmark/children root))
+    (cmark/unlink! p1)
+    (cmark/unlink! p1)
+    (def wrapper (cmark/new root :block-quote))
+    (cmark/append-child! wrapper p1)
+    (cmark/unlink! p2)
+    (cmark/append-child! wrapper p2)
+    (cmark/new root :text)
+    (when (zero? (% i 20))
+      (array/push! kept p2)))
+  (gccollect)
+  (is (== "<p>more <em>0</em></p>\n" (html (first kept))))
+  (gccollect)
+  (is (= 10 (length kept))))
+
+(run-tests!)

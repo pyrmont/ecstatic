@@ -1,0 +1,65 @@
+(import ../deps/gum/test :prefix "")
+(import ./support/fixture)
+
+(import ../lib/fs)
+(import ../lib/git)
+
+(def- dir "tmp/test/git")
+
+; Git runs without the user's config, so that signing, hooks and the like do
+; not apply, and with fixed dates, so that the commit times are known.
+(defn- git [date & args]
+  (def env (merge (os/environ)
+                  {"GIT_CONFIG_GLOBAL" "/dev/null"
+                   "GIT_CONFIG_NOSYSTEM" "1"
+                   "GIT_AUTHOR_NAME" "Ada"
+                   "GIT_AUTHOR_EMAIL" "ada@example.org"
+                   "GIT_COMMITTER_NAME" "Ada"
+                   "GIT_COMMITTER_EMAIL" "ada@example.org"
+                   "GIT_AUTHOR_DATE" date
+                   "GIT_COMMITTER_DATE" date
+                   :out :pipe :err :pipe}))
+  (def proc (os/spawn ["git" "-C" dir |args] :pe env))
+  (:read (proc :out) :all)
+  (def err (:read (proc :err) :all))
+  (unless (zero? (os/proc-wait proc))
+    (errorf "git %s failed: %s" (first args) err)))
+
+(defn- commit [date files]
+  (each [path content] (pairs files)
+    (fs/write (string dir "/" path) content))
+  (git date "add" "-A")
+  (git date "commit" "-q" "-m" date))
+
+(fixture/make-site dir {})
+(git "@0 +0000" "init" "-q")
+(commit "@1000 +0000" {"src/a.md" "1" "src/b.md" "1" "other.txt" "1"})
+(commit "@2000 +0900" {"src/a.md" "2" "src/sub/c d.md" "1"})
+(commit "@3000 +0000" {"other.txt" "2"})
+
+(deftest modified-times
+  (is (== {"a.md" 2000 "b.md" 1000 "sub/c d.md" 2000}
+          (freeze (git/modified-times (string dir "/src")))))
+  (is (== {"src/a.md" 2000 "src/b.md" 1000 "src/sub/c d.md" 2000 "other.txt" 3000}
+          (freeze (git/modified-times dir)))))
+
+(deftest revision
+  (def rev (git/revision (string dir "/src")))
+  (is (= 40 (length rev)))
+  (is (== rev (git/revision dir))))
+
+(deftest not-a-repository
+  (fixture/make-site "tmp/test/no-git" {"a.md" "1"})
+  ; Git looks for a repository in parent directories, so stop it at tmp/test.
+  (os/setenv "GIT_CEILING_DIRECTORIES" (os/realpath "tmp/test"))
+  (is (nil? (git/revision "tmp/test/no-git")))
+  (is (== {} (freeze (git/modified-times "tmp/test/no-git"))))
+  (os/setenv "GIT_CEILING_DIRECTORIES" nil)
+  (fixture/rmrf "tmp/test/no-git"))
+
+(deftest missing-directory
+  (is (nil? (git/revision "tmp/test/missing")))
+  (is (== {} (freeze (git/modified-times "tmp/test/missing")))))
+
+(defer (fixture/rmrf dir)
+  (run-tests!))

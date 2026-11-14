@@ -1,0 +1,149 @@
+(import ../deps/gum/test :prefix "")
+
+(import ../lib/frontmatter)
+
+(defn- message [f]
+  (try (do (f) nil) ([e] e)))
+
+(defn- parse [& lines]
+  (frontmatter/parse (string/join "\n" lines)))
+
+; Splitting
+
+(deftest split-front-matter
+  (is (== ["title: x\n" "body\n"]
+          (frontmatter/split "---\ntitle: x\n---\nbody\n"))))
+
+(deftest split-empty-front-matter
+  (is (== ["" ""] (frontmatter/split "---\n---\n")))
+  (is (== ["" "body"] (frontmatter/split "---\n---\nbody"))))
+
+(deftest split-crlf-and-dots
+  (is (== ["a: 1\r\n" "body"] (frontmatter/split "---\r\na: 1\r\n...\r\nbody"))))
+
+(deftest split-trailing-spaces-on-fences
+  (is (== ["a: 1\n" "b"] (frontmatter/split "---  \na: 1\n---\t\nb"))))
+
+(deftest split-without-front-matter
+  (is (nil? (frontmatter/split "body\n")))
+  (is (nil? (frontmatter/split "----\na: 1\n---\n")))
+  (is (nil? (frontmatter/split "---\na: 1\n"))))
+
+(deftest split-ignores-indented-fence
+  (is (== ["a: |\n   ---\n" "b"]
+          (frontmatter/split "---\na: |\n   ---\n---\nb"))))
+
+; Scalars
+
+(deftest parse-plain-scalars
+  (is (== {:layout "post" :title "A Week with the iPhone XS Max"}
+          (parse "layout: post" "title: A Week with the iPhone XS Max"))))
+
+(deftest parse-plain-scalar-with-colon-and-hash
+  (is (== {:url "https://a.example/b#c" :title "Analogue – Pro: Camera"}
+          (parse "url: https://a.example/b#c" "title: Analogue – Pro: Camera"))))
+
+(deftest parse-comments
+  (is (== {:a "x" :b 1}
+          (parse "# comment" "a: x # trailing" "  # indented comment" "b: 1"))))
+
+(deftest parse-null-and-empty
+  (is (== {} (parse "category:" "a: null" "b: ~" "c: NULL"))))
+
+(deftest parse-booleans
+  (is (== {:a true :b false :c true}
+          (parse "a: true" "b: false" "c: TRUE"))))
+
+(deftest parse-numbers
+  (is (== {:a 2018 :b -5 :c 1.5 :d "1e3" :e "0x10"}
+          (parse "a: 2018" "b: -5" "c: 1.5" "d: 1e3" "e: 0x10"))))
+
+(deftest parse-double-quoted
+  (is (== {:title "Introducing \"Jeep\": a tool"}
+          (parse "title: \"Introducing \\\"Jeep\\\": a tool\""))))
+
+(deftest parse-double-quoted-escapes
+  (is (== {:a "\\ / \n \t é ☺ \x01"}
+          (parse "a: \"\\\\ \\/ \\n \\t \\u00e9 \\u263A \\x01\""))))
+
+(deftest parse-double-quoted-with-comment
+  (is (== {:a "x # y"} (parse "a: \"x # y\" # z"))))
+
+(deftest parse-double-quoted-keeps-unicode
+  (is (== {:a "Don’t"} (parse "a: \"Don’t\""))))
+
+(deftest parse-single-quoted
+  (is (== {:a "it's \\n"} (parse "a: 'it''s \\n'"))))
+
+(deftest parse-key-characters
+  (is (== {:render_with_liquid false :quote-post true}
+          (parse "render_with_liquid: false" "quote-post: true"))))
+
+(deftest parse-repeated-key
+  (is (== {:a 2} (parse "a: 1" "a: 2")))
+  (is (== {} (parse "a: 1" "a:"))))
+
+(deftest parse-crlf
+  (is (== {:a "x" :b "y"} (frontmatter/parse "a: x\r\nb: y\r\n"))))
+
+; Lists
+
+(deftest parse-flow-lists
+  (is (== {:a [] :b ["weeknotes"] :c ["x y" "z" 3 true] :d ["a" "b"]}
+          (parse "a: []" "b: [\"weeknotes\"]" "c: [x y , 'z', 3, true]"
+                 "d: [a, b,]"))))
+
+; Nested maps
+
+(deftest parse-nested-map
+  (is (== {:date "2026-01-12 23:41:58 +0900"
+           :link {:url "https://x.example/" :title "T: x" :thumb "https://y@jpeg"}
+           :source "at://did"}
+          (parse "date: 2026-01-12 23:41:58 +0900"
+                 "link:"
+                 "  url: https://x.example/"
+                 ""
+                 "  title: \"T: x\""
+                 "  thumb: https://y@jpeg"
+                 "source: at://did"))))
+
+(deftest parse-nested-map-two-levels
+  (is (== {:a {:b {:c 1} :d 2}}
+          (parse "a:" "  b:" "    c: 1" "  d: 2"))))
+
+; Block scalars
+
+(deftest parse-literal-block
+  (is (== {:desc "line 1\n\nline 2\n" :next 1}
+          (parse "desc: |" "    line 1" "" "    line 2" "" "next: 1"))))
+
+(deftest parse-literal-block-chomping
+  (is (== {:a "x" :b "y\n\n" :c "z\n"}
+          (frontmatter/parse "a: |-\n  x\nb: |+\n  y\n\nc: |\n  z\n"))))
+
+(deftest parse-literal-block-keeps-indentation
+  (is (== {:a "x\n  y\n"} (parse "a: |" "  x" "    y"))))
+
+(deftest parse-empty-literal-block
+  (is (== {:a "" :b 1} (parse "a: |" "b: 1"))))
+
+; Errors
+
+(deftest parse-errors
+  (each [lines msg]
+        [[["  a: 1"] "front matter line 1: unexpected indentation"]
+         [["a: 1" "    b: 2"] "front matter line 2: unexpected indentation"]
+         [["a 1"] "front matter line 1: expected key: value"]
+         [["a: {b: 1}"] "front matter line 1: unsupported syntax: {b: 1}"]
+         [["a: &x 1"] "front matter line 1: unsupported syntax: &x 1"]
+         [["a: >" "  b"] "front matter line 1: unsupported syntax: >"]
+         [["a: - b"] "front matter line 1: unsupported syntax: - b"]
+         [["a:" "  - b"] "front matter line 2: block lists are not supported"]
+         [["a: \"x"] "front matter line 1: invalid double-quoted string"]
+         [["a: \"x\" y"] "front matter line 1: invalid double-quoted string"]
+         [["a: \"\\q\""] "front matter line 1: invalid double-quoted string"]
+         [["a: 'x"] "front matter line 1: invalid single-quoted string"]
+         [["a: [x"] "front matter line 1: invalid list"]]
+    (is (== msg (message #(parse |lines))))))
+
+(run-tests!)

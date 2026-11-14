@@ -1,0 +1,174 @@
+; Serves a built site over HTTP, for previewing it locally. Only GET and HEAD
+; are answered, and every response closes the connection.
+
+(def default-host "127.0.0.1")
+(def default-port 4000)
+
+; Requests with headers longer than this, in bytes, are refused.
+(def- max-head 16384)
+
+; The seconds to wait for a request's headers.
+(def- read-timeout 5)
+
+(def- types
+  {"css" "text/css; charset=utf-8"
+   "gif" "image/gif"
+   "htm" "text/html; charset=utf-8"
+   "html" "text/html; charset=utf-8"
+   "ico" "image/x-icon"
+   "jpeg" "image/jpeg"
+   "jpg" "image/jpeg"
+   "js" "text/javascript; charset=utf-8"
+   "json" "application/json"
+   "md" "text/plain; charset=utf-8"
+   "mp3" "audio/mpeg"
+   "mp4" "video/mp4"
+   "pdf" "application/pdf"
+   "png" "image/png"
+   "svg" "image/svg+xml"
+   "txt" "text/plain; charset=utf-8"
+   "wasm" "application/wasm"
+   "webmanifest" "application/manifest+json"
+   "webp" "image/webp"
+   "woff" "font/woff"
+   "woff2" "font/woff2"
+   "xml" "application/xml"})
+
+(defn content-type
+  "Returns the media type of the file at path, from its extension."
+  [path]
+  (def name (last (string/split "/" path)))
+  (def i (last (string/find-all "." name)))
+  (or (when i (types (string/ascii-lower (string/slice name (inc i)))))
+      "application/octet-stream"))
+
+(def- decode-peg
+  (peg/compile
+    `(* (% (any (+ (/ (* "%" (<- (2 :h))) ~(fn [h] (string/from-bytes (scan-number h 16))))
+                   (<- 1))))
+        -1)))
+
+(defn- kind [path] (os/stat path :mode))
+
+(defn locate
+  """
+  Returns what a request for target is answered with from dir:
+
+  - `[:file path]` for a file. A path ending in `/` names the directory's
+    `index.html`, and a path to no file names the file with `.html` added if
+    there is one, as with Jekyll's server.
+  - `[:redirect location]` for a directory named without a trailing `/`.
+  - `:bad` for a target that is not an absolute path or that has a `..` or
+    NUL in it once decoded.
+  - nil if there is no such file.
+  """
+  [dir target]
+  (def [path query] (let [i (string/find "?" target)]
+                      (if i
+                        [(string/slice target 0 i) (string/slice target i)]
+                        [target ""])))
+  (def decoded (first (peg/match decode-peg path)))
+  (cond
+    (or (not (string/has-prefix? "/" decoded))
+        (string/find "\0" decoded)
+        (find #(= ".." $) (string/split "/" decoded)))
+    :bad
+
+    (let [full (string dir decoded)]
+      (cond
+        (string/has-suffix? "/" decoded)
+        (let [index (string full "index.html")]
+          (when (= :file (kind index)) [:file index]))
+
+        (= :file (kind full)) [:file full]
+        (= :directory (kind full)) [:redirect (string path "/" query)]
+        (= :file (kind (string full ".html"))) [:file (string full ".html")]))))
+
+(defn- respond [conn status reason headers body head?]
+  (def out !"")
+  (buffer/push! out "HTTP/1.1 " (string status) " " reason "\r\n")
+  (each [k v] (pairs (assoc headers "Content-Length" (string (length body))
+                                    "Connection" "close"))
+    (buffer/push! out k ": " v "\r\n"))
+  (buffer/push! out "\r\n")
+  (unless head? (buffer/push! out body))
+  (net/write conn out))
+
+(defn- read-head [conn]
+  (def buf !"")
+  (var more true)
+  (while (and more
+              (not (string/find "\r\n\r\n" buf))
+              (< (length buf) max-head))
+    (set more (truthy? (net/read conn 4096 buf read-timeout))))
+  buf)
+
+(defn- answer
+  "Answers the request in head from dir and returns its status."
+  [conn dir head]
+  (def line (string/slice head 0 (or (string/find "\r\n" head) (length head))))
+  (def [method target] (string/split " " line))
+  (def head? (= method "HEAD"))
+  (defn plain [status reason]
+    (respond conn status reason {"Content-Type" "text/plain; charset=utf-8"}
+             (string status " " reason "\n") head?)
+    status)
+  (if (not (or (= method "GET") head?))
+    (plain 405 "Method Not Allowed")
+    (let [found (locate dir (or target ""))]
+      (cond
+        (= :bad found) (plain 400 "Bad Request")
+        (nil? found) (plain 404 "Not Found")
+        (= :redirect (first found))
+        (do
+          (respond conn 301 "Moved Permanently"
+                   {"Location" (get found 1) "Content-Type" "text/plain; charset=utf-8"}
+                   "" head?)
+          301)
+        (let [path (get found 1)]
+          (respond conn 200 "OK" {"Content-Type" (content-type path)} (slurp path) head?)
+          200)))))
+
+(defn handler
+  """
+  Returns a function that answers a connection with the files in dir and,
+  unless quiet? is true, prints the request line and status of each request.
+  """
+  [dir & {:keys [quiet?]}]
+  (fn [conn]
+    (defer (:close conn)
+      (try
+        (do
+          (def head (read-head conn))
+          (unless (empty? head)
+            (def status (answer conn dir head))
+            (unless quiet?
+              (print (string/slice head 0 (or (string/find "\r\n" head) (length head)))
+                     " " status)
+              (flush))))
+        ([e]
+          (eprint "ecstatic: request failed: " e))))))
+
+(defn start
+  """
+  Serves the files in directory on host and port, and returns the server.
+  Port 0 picks a free port; `net/localname` gives the one chosen.
+  """
+  [& {:keys [directory host port quiet?]
+      :or {host default-host port default-port}}]
+  (assertf (= :directory (kind directory)) "not a directory: %s" directory)
+  (def dir (string/trimr directory "/"))
+  (net/server host port (handler (if (empty? dir) "/" dir) :quiet? quiet?)))
+
+(defn serve
+  """
+  Serves the files in directory until the process is stopped. Prints the
+  address, then each request unless quiet? is true.
+  """
+  [& {:keys [directory host port quiet?]
+      :or {host default-host port default-port}}]
+  (def server (start :directory directory :host host :port port :quiet? quiet?))
+  (def [h p] (net/localname server))
+  (print "Serving " directory " on http://" h ":" p "/")
+  (flush)
+  server)

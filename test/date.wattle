@@ -1,0 +1,98 @@
+(import ../deps/gum/test :prefix "")
+
+(import ../lib/date)
+
+(def- jst 32400)
+
+(defn- message [f]
+  (try (do (f) nil) ([e] e)))
+
+(deftest parse-offsets
+  (is (== [32400 32400 32400 -18000 0 -12600 0]
+          (map date/parse-offset
+               ["+0900" "+09:00" "+09" "-05" "Z" "-0330" "-00:00"]))))
+
+(deftest parse-invalid-offset
+  (is (== "invalid offset JST" (message #(date/parse-offset "JST")))))
+
+(deftest parse-date-time-with-offset
+  ; 2026-01-12 14:41:58 UTC
+  (is (= 1768228918 (date/parse "2026-01-12 23:41:58 +0900" 0)))
+  (is (= 1768228918 (date/parse "2026-01-12T14:41:58Z" jst)))
+  (is (= 1768228918 (date/parse "2026-01-12T05:41:58-09:00" jst))))
+
+(deftest parse-iso-with-fraction
+  ; The fraction is dropped, as Jekyll's `%s` drops it.
+  (is (= 1581919495 (date/parse "2020-02-17T06:04:55.990-00:00" jst))))
+
+(deftest parse-without-offset
+  (is (= 1776697200 (date/parse "2026-04-21" jst)))
+  (is (= 1776733200 (date/parse "2026-04-21 10:00" jst)))
+  (is (= 1776783600 (date/parse "2026-04-21 10:00" -18000))))
+
+(deftest parse-single-digit-month-and-day
+  (is (= (date/parse "2026-04-01" 0) (date/parse "2026-4-1" 0))))
+
+(deftest parse-invalid-dates
+  (each s ["nope" "2026-13-01" "2026-02-30" "2026-01-01 24:00" "2026-01-01 extra"
+           "26-01-01"]
+    (is (== (string "invalid date " s) (message #(date/parse s 0))))))
+
+(deftest parts-at-offset
+  (is (== {:year 2026 :month 1 :day 12 :hour 23 :minute 41 :second 58
+           :week-day 1 :year-day 12}
+          (date/parts 1768228918 jst)))
+  (is (== {:year 2026 :month 1 :day 12 :hour 14 :minute 41 :second 58
+           :week-day 1 :year-day 12}
+          (date/parts 1768228918 0))))
+
+(deftest parts-across-midnight
+  ; 2025-12-31 20:00 UTC is 2026-01-01 05:00 in Tokyo.
+  (def t (date/parse "2025-12-31 20:00 Z" 0))
+  (is (== [2026 1 1] (let [d (date/parts t jst)] [(d :year) (d :month) (d :day)])))
+  (is (== [2025 12 31] (let [d (date/parts t 0)] [(d :year) (d :month) (d :day)]))))
+
+; Formatting. 1776743617 is 2026-04-21 12:53:37 +0900, a Tuesday. The
+; expected strings are what Ruby's strftime gives for the same time.
+
+(def- t 1776743617)
+
+(deftest format-directives
+  (is (== "21 April 2026" (date/format "%-d %B %Y" t jst)))
+  (is (== "Apr 21, 2026" (date/format "%b %-d, %Y" t jst)))
+  (is (== "12:53 PM, Apr 21" (date/format "%-I:%M %p, %b %-d" t jst)))
+  (is (== "Tuesday Tue 21 111 26 1776743617 %"
+          (date/format "%A %a %e %j %y %s %%" t jst)))
+  (is (== "2026-04-21 12:53:37" (date/format "%Y-%m-%d %H:%M:%S" t jst))))
+
+(deftest format-padding
+  ; 2026-01-05 03:04:05 +0900
+  (def early (date/parse "2026-01-05 03:04:05 +0900" 0))
+  (is (== "01/05 03:04:05 03AM  5 005" (date/format "%m/%d %H:%M:%S %I%p %e %j" early jst)))
+  (is (== "1/5 3:4:5 3AM 5 5" (date/format "%-m/%-d %-H:%-M:%-S %-I%p %-e %-j" early jst))))
+
+(deftest format-twelve-hour-clock
+  (is (== "12AM 12PM" (string (date/format "%-I%p" (date/parse "2026-01-01 00:30 Z" 0) 0) " "
+                              (date/format "%-I%p" (date/parse "2026-01-01 12:30 Z" 0) 0)))))
+
+(deftest format-zone
+  (is (== "12:53 JST" (date/format "%H:%M %Z" t jst "JST")))
+  (is (== "+0900 +0900" (date/format "%z %Z" t jst)))
+  (is (== "-0330" (date/format "%z" t -12600))))
+
+(deftest format-errors
+  (is (== "unknown directive %q in \"%q\"" (message #(date/format "%q" t 0))))
+  (is (== "incomplete directive at the end of \"50%\"" (message #(date/format "50%" t 0)))))
+
+(deftest format-offsets
+  (is (== ["+0900" "+09:00" "-0330" "-03:30" "+0000"]
+          [(date/format-offset jst) (date/format-offset jst true)
+           (date/format-offset -12600) (date/format-offset -12600 true)
+           (date/format-offset 0)])))
+
+(deftest feed-dates
+  (is (== "2026-04-21T12:53:37+09:00" (date/rfc3339 t jst)))
+  (is (== "2026-04-21T03:53:37+00:00" (date/rfc3339 t 0)))
+  (is (== "Tue, 21 Apr 2026 12:53:37 +0900" (date/rfc822 t jst))))
+
+(run-tests!)
