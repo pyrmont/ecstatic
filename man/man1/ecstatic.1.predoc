@@ -149,7 +149,9 @@ is under a path in ``:include``. A post or page whose front matter sets
 
 Front matter is YAML between lines of ``---``. Only a subset of YAML is read:
 plain, single-quoted and double-quoted scalars, flow lists such as
-``[a, b]``, nested maps and literal block scalars. Other syntax is an error.
+``[a, b]``, block lists of scalars (one ``- item`` per line), nested maps
+and literal block scalars. Other syntax, such as folded scalars, anchors,
+tags and maps inside lists, is an error that names the line.
 
 The site map passed to ``build`` has these keys:
 

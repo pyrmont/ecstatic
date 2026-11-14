@@ -82,6 +82,12 @@ destination directory, and `:body`. The site map has the site's posts (newest
 first), pages and static files, which are read as Jekyll reads them. Static
 files are copied after the theme's pages are written.
 
+Front matter is YAML, but only a subset of it is supported: plain and quoted
+scalars, flow lists (`[a, b]`), block lists of scalars (one `- item` per
+line), nested maps and literal block scalars (`|`). Other YAML, such as
+folded scalars (`>`), anchors, tags and maps inside lists, is an error that
+names the line.
+
 The theme can also define `config`, a map that is passed to `build` as
 `:config`, and `permalink`, a function that returns a post's URL. Ecstatic
 reads `:offset`, `:include`, `:exclude`, `:future?` and `:markdown` from

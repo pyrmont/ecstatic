@@ -7,6 +7,8 @@
 ; - double-quoted strings with the escapes `\\`, `\"`, `\/`, `\n`, `\r`,
 ;   `\t`, `\0`, `\xHH` and `\uXXXX`, and single-quoted strings with `''`
 ; - flow lists of scalars, as in `[a, "b"]`
+; - block lists of scalars or flow lists, one `- item` per line, indented
+;   under their key or level with it
 ; - a key with no value followed by more indented pairs, which is a nested map
 ; - literal block scalars, `|`, `|-` and `|+`
 ; - comments, from a `#` at the start of a line or after a space
@@ -101,7 +103,9 @@
   "Removes a comment that starts after a space or tab from the plain scalar s."
   [s]
   (def i (or (string/find " #" s) (string/find "\t#" s)))
-  (string/trim (if i (string/slice s 0 i) s)))
+  (cond
+    (string/has-prefix? "#" s) ""
+    (string/trim (if i (string/slice s 0 i) s))))
 
 (defn- parse-value [s n]
   (def c (string/slice s 0 1))
@@ -117,6 +121,22 @@
         (string/has-prefix? "- " s))
     (fail n (string "unsupported syntax: " s))
     (resolve-plain (strip-comment s))))
+
+(defn- dash?
+  "Returns true if line, from its indentation, is an item of a block list."
+  [line indent]
+  (def t (string/slice line indent))
+  (or (= "-" (string/trimr t)) (string/has-prefix? "- " t) (string/has-prefix? "-\t" t)))
+
+(def- pair-peg (peg/compile '(* (some (+ :w (set "_-"))) ":" (+ (set " \t") -1))))
+
+(defn- parse-item [s n]
+  (cond
+    (empty? (strip-comment s)) nil
+    (peg/match '(* "|" (? (set "+-")) -1) (strip-comment s))
+    (fail n (string "unsupported syntax: " s))
+    (peg/match pair-peg s) (fail n "maps in block lists are not supported")
+    (parse-value s n)))
 
 (defn- next-line
   "Returns the index of the first line from i that is not blank or a comment."
@@ -158,6 +178,29 @@
       (if (empty? text) "" (string text "\n"))))
   [value j])
 
+(defn- parse-list
+  """
+  Parses the items of a block list at indent, starting at line i, where
+  key-indent is the indentation of the list's key. Returns the vector and the
+  index of the first line that is not part of it.
+  """
+  [lines i indent key-indent]
+  (var v [])
+  (var i i)
+  (while (< i (length lines))
+    (def line (lines i))
+    (cond
+      (skip? line) (++ i)
+      (< (indent-of line) indent) (break)
+      (> (indent-of line) indent) (fail i "unexpected indentation")
+      (not (dash? line indent)) (if (= indent key-indent)
+                                  (break)
+                                  (fail i "expected a list item"))
+      (do
+        (set v (conj v (parse-item (string/trim (string/slice line (+ indent 1))) i)))
+        (++ i))))
+  [v i])
+
 (defn- parse-map
   """
   Parses the pairs at indent, starting at line i. Returns the map and the
@@ -185,14 +228,19 @@
             (set m (assoc m (keyword k) v))
             (set i j))
           (empty? (strip-comment rest))
-          (let [j (next-line lines (inc i))]
-            (when (and (< j (length lines))
-                       (string/has-prefix? "- " (string/triml (lines j))))
-              (fail j "block lists are not supported"))
-            (if (and (< j (length lines)) (> (indent-of (lines j)) indent))
-              (let [[sub after] (parse-map lines j (indent-of (lines j)))]
+          (let [j (next-line lines (inc i))
+                next-indent (when (< j (length lines)) (indent-of (lines j)))]
+            (cond
+              (and next-indent (>= next-indent indent) (dash? (lines j) next-indent))
+              (let [[v after] (parse-list lines j next-indent indent)]
+                (set m (assoc m (keyword k) v))
+                (set i after))
+
+              (and next-indent (> next-indent indent))
+              (let [[sub after] (parse-map lines j next-indent)]
                 (set m (assoc m (keyword k) sub))
                 (set i after))
+
               (do
                 (set m (dissoc m (keyword k)))
                 (++ i))))

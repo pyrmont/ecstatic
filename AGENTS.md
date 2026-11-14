@@ -180,11 +180,14 @@ unless under `:include`. Posts with equal dates are in descending order of
 path, as in Jekyll. Dates are seconds since the epoch, with fractions
 dropped; a date without an offset is read at the site's offset.
 
-`lib/frontmatter.wattle` parses only the YAML that the two sites and
-Blueshift's output use (see the comment at the top of the file); anything
-else is an error that names the line. Dates stay strings in the parsed map.
-It was checked against Ruby's Psych, which Jekyll uses, on every file with
-front matter in both sites (1,930 files) and matched on all of them.
+`lib/frontmatter.wattle` parses a subset of YAML: the YAML that the two
+sites and Blueshift's output use, plus block lists of scalars (see the
+comment at the top of the file). Anything else is an error that names the
+line. Dates stay strings in the parsed map. It was checked against Ruby's
+Psych, which Jekyll uses, on every file with front matter in both sites
+(1,930 files) and matched on all of them; block lists were checked against
+Psych separately. A construct that is not supported should raise an error
+rather than parse differently from Psych.
 
 A theme cannot `import` Ecstatic's modules, because a built executable has
 no module path. Instead `theme/load` copies the bindings whose names begin

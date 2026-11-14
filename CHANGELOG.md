@@ -29,3 +29,4 @@ since the most recent release are under Unreleased.
 - Posts and pages have `:modified`, the time of the last commit to the file,
   and the site has `:revision` and `:time`.
 - `ecstatic serve` serves a built site over HTTP for previewing it.
+- Front matter can use block lists of scalars, one `- item` per line.
