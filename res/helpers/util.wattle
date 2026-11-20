@@ -1,0 +1,53 @@
+; Builds sites for the tests under tmp/test/, either by copying a tree in
+; res/fixtures/ or by writing files from a map. A test writes only into its
+; copy, never into res/. Run the tests from the project root.
+
+(import ../../lib/fs)
+
+(def root
+  "The directory that holds the fixtures."
+  "res/fixtures")
+
+(def rmrf
+  "Removes path and, if it is a directory, everything under it."
+  fs/rmrf)
+
+(defn make-site
+  """
+  Replaces the directory dir with a site whose files are given by files, a
+  map of paths relative to dir to their contents. Returns dir.
+  """
+  [dir files]
+  (rmrf dir)
+  (fs/mkdirp dir)
+  (each [path content] (pairs files)
+    (fs/write (string dir "/" path) content))
+  dir)
+
+(defn- copy-tree [from to]
+  (def mode (os/lstat from :mode))
+  (case mode
+    :link (os/symlink (os/readlink from) to)
+    :directory (do
+                 (os/mkdir to)
+                 (each name (os/dir from)
+                   (unless (= ".gitkeep" name)
+                     (copy-tree (string from "/" name) (string to "/" name)))))
+    :file (do
+            (spit to (slurp from))
+            (os/chmod to (os/stat from :int-permissions)))
+    (errorf "cannot copy %s: %v" from mode)))
+
+(defn copy
+  """
+  Replaces the directory dest with a copy of the fixture called name, a
+  directory in res/fixtures/. Symlinks are copied as symlinks and files keep
+  their permissions. `.gitkeep` files, which hold empty directories in Git,
+  are left out. Returns dest.
+  """
+  [name dest]
+  (rmrf dest)
+  (when-let [dir (fs/parent dest)]
+    (fs/mkdirp dir))
+  (copy-tree (string root "/" name) dest)
+  dest)

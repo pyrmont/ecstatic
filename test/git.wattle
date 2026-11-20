@@ -1,5 +1,5 @@
 (import ../deps/gum/test :prefix "")
-(import ./support/fixture)
+(import ../res/helpers/util :as h)
 
 (import ../lib/fs)
 (import ../lib/git)
@@ -31,7 +31,7 @@
   (git date "add" "-A")
   (git date "commit" "-q" "-m" date))
 
-(fixture/make-site dir {})
+(h/make-site dir {})
 (git "@0 +0000" "init" "-q")
 (commit "@1000 +0000" {"src/a.md" "1" "src/b.md" "1" "other.txt" "1"})
 (commit "@2000 +0900" {"src/a.md" "2" "src/sub/c d.md" "1"})
@@ -49,17 +49,17 @@
   (is (== rev (git/revision dir))))
 
 (deftest not-a-repository
-  (fixture/make-site "tmp/test/no-git" {"a.md" "1"})
+  (h/make-site "tmp/test/no-git" {"a.md" "1"})
   ; Git looks for a repository in parent directories, so stop it at tmp/test.
   (os/setenv "GIT_CEILING_DIRECTORIES" (os/realpath "tmp/test"))
   (is (nil? (git/revision "tmp/test/no-git")))
   (is (== {} (freeze (git/modified-times "tmp/test/no-git"))))
   (os/setenv "GIT_CEILING_DIRECTORIES" nil)
-  (fixture/rmrf "tmp/test/no-git"))
+  (h/rmrf "tmp/test/no-git"))
 
 (deftest missing-directory
   (is (nil? (git/revision "tmp/test/missing")))
   (is (== {} (freeze (git/modified-times "tmp/test/missing")))))
 
-(defer (fixture/rmrf dir)
+(defer (h/rmrf dir)
   (run-tests!))

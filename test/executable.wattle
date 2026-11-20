@@ -1,5 +1,5 @@
 (import ../deps/gum/test :prefix "")
-(import ./support/fixture)
+(import ../res/helpers/util :as h)
 
 ; These tests run the executable that `wattle build exe` writes, so build it
 ; first and run from the project root.
@@ -137,21 +137,8 @@
     (is (== (string expect "\n") out))
     (is (= nil err))))
 
-(defn- make-theme [source]
-  (fixture/make-site src {"_ecstatic.wattle" source
-                          "_theme/layout.wattle"
-                          """
-                          (defn page [title] (string "<h1>" title "</h1>"))
-                          """}))
-
 (deftest cli-build
-  (make-theme
-    """
-    (import ./_theme/layout)
-    (def config {:title "Test"})
-    (defn build [site]
-      [{:path "index.html" :body (layout/page (get-in site [:config :title]))}])
-    """)
+  (h/copy "layout" src)
   (def out (string dir "/public"))
   (def [exit-code stdout err] (run "build" "-s" src "-d" out))
   (def msg
@@ -167,14 +154,14 @@
   (is (== "<h1>Test</h1>" (slurp (string out "/index.html")))))
 
 (deftest cli-build-quiet
-  (make-theme "(defn build [site] [])")
+  (h/copy "layout" src)
   (def [exit-code out err] (run "build" "-q" "-s" src "-d" (string dir "/public")))
   (is (= 0 exit-code))
   (is (= nil out))
   (is (= nil err)))
 
 (deftest cli-build-missing-theme
-  (fixture/make-site src {"index.md" ""})
+  (h/make-site src {"index.md" ""})
   (def [exit-code out err] (run "build" "-q" "-s" src))
   (is (= 1 exit-code))
   (is (= nil out))
@@ -190,7 +177,7 @@
   line)
 
 (deftest cli-serve
-  (fixture/make-site (string dir "/site") {"index.html" "<h1>Home</h1>"})
+  (h/copy "serve" (string dir "/site"))
   (with [null (file/open "/dev/null" :r)]
     (def proc (os/spawn [exe "serve" "-d" (string dir "/site") "-p" "0"] :p
                         {:in null :out :pipe :err :pipe}))
@@ -210,5 +197,5 @@
   (is (= nil out))
   (is (== "ecstatic: invalid port: http\n" err)))
 
-(defer (fixture/rmrf dir)
+(defer (h/rmrf dir)
   (run-tests!))

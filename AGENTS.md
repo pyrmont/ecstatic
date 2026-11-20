@@ -38,7 +38,6 @@ ecstatic/
 │   ├── serve.wattle     # `ecstatic serve`: a static file server for previews
 │   └── version.wattle   # Version label, fixed at compile time
 ├── test/
-│   ├── support/fixture.wattle  # Writes sites for the tests under tmp/test/
 │   ├── executable.wattle       # Runs zig-out/bin/ecstatic
 │   ├── cmark.wattle            # The native module itself
 │   ├── content.wattle
@@ -58,7 +57,10 @@ ecstatic/
 ├── deps/gum/            # Vendored with `wattle gum args test`
 ├── deps/cmark-gfm/      # cmark-gfm 0.29.0.gfm.13: src/, config/ (hand-written headers)
 ├── deps/oniguruma/      # Oniguruma 6.9.10 (from Augite)
-├── res/tools/           # version.wattle (release tooling)
+├── res/
+│   ├── fixtures/        # Sites and grammars that tests copy to tmp/test/
+│   ├── helpers/util.wattle # Test helpers: copy, make-site and rmrf
+│   └── tools/           # version.wattle (release tooling)
 ├── man/man1/
 │   ├── ecstatic.1.predoc  # Man page source (Predoc)
 │   └── ecstatic.1         # Generated man page (committed)
@@ -268,8 +270,16 @@ and the man page and updates `CHANGELOG.md`.
 ## Testing
 
 Tests are plain Wattle scripts in `test/`, using `deps/gum/test.wattle`
-(`deftest`, `is`, `run-tests!`). Tests write sites under `tmp/test/`, which
-is ignored by Git, and remove them when they finish.
+(`deftest`, `is`, `run-tests!`). `wattle test` runs every file in `test/`, so
+put nothing else there. Helpers are in `res/helpers/util.wattle`, imported as
+`(import ../res/helpers/util :as h)`.
+
+Tests write sites under `tmp/test/`, which is ignored by Git, and remove them
+when they finish. A site that is static content, such as a theme with posts
+or a directory of grammars, is a committed tree in `res/fixtures/<name>/`
+that the test copies with `h/copy`; a test never writes into `res/`. A small
+site that is clearer beside its assertion is written from a map with
+`h/make-site`.
 
 ```bash
 wattle build exe      # test/executable.wattle runs zig-out/bin/ecstatic

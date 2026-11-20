@@ -1,15 +1,11 @@
 (import ../deps/gum/test :prefix "")
-(import ./support/fixture)
+(import ../res/helpers/util :as h)
 (import ../lib/serve)
 
 (def- dir "tmp/test/serve")
 
 (defn- make-site []
-  (fixture/make-site dir {"index.html" "<h1>Home</h1>"
-                          "about.html" "<h1>About</h1>"
-                          "list/2/index.html" "<h1>Page 2</h1>"
-                          "feed.xml" "<feed/>"
-                          "a b.txt" "spaced"}))
+  (h/copy "serve" dir))
 
 (deftest content-type
   (is (= "text/html; charset=utf-8" (serve/content-type "x/index.html")))
@@ -62,5 +58,5 @@
   (is (not ok?))
   (is (== (string "not a directory: " dir "/none") e)))
 
-(defer (fixture/rmrf dir)
+(defer (h/rmrf dir)
   (run-tests!))

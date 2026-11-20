@@ -1,5 +1,5 @@
 (import ../deps/gum/test :prefix "")
-(import ./support/fixture)
+(import ../res/helpers/util :as h)
 
 (import ../lib/site)
 
@@ -8,7 +8,7 @@
 (def- out (string dir "/public"))
 
 (defn- make-theme [source & files]
-  (fixture/make-site src (merge {"_ecstatic.wattle" source} |files)))
+  (h/make-site src (merge {"_ecstatic.wattle" source} |files)))
 
 (defn- build []
   (site/build :source src :destination out :quiet? true))
@@ -27,7 +27,7 @@
       [{:path "index.html" :body (get-in site [:config :title])}
        {:path "a/b/c.html" :body !"deep"}])
     """)
-  (fixture/rmrf out)
+  (h/rmrf out)
   (build)
   (is (== "Test" (page "index.html")))
   (is (== "deep" (page "a/b/c.html"))))
@@ -78,24 +78,9 @@
           (message build))))
 
 (deftest build-converts-markdown
-  (make-theme
-    """
-    (defn smallcaps [root]
-      (each node (cmark/nodes root)
-        (when (= :strong (cmark/type node))
-          (cmark/insert-before! node (cmark/set-literal! (cmark/new root :html-inline) "<span>"))
-          (cmark/insert-after! node (cmark/set-literal! (cmark/new root :html-inline) "</span>")))))
-    (def config {:markdown {:options [:smart :unsafe] :transforms [smallcaps]}})
-    (defn build [site]
-      (map (fn [item]
-             {:path (string (item :path) ".out")
-              :body (string/format "%q" [(item :html) (item :excerpt)])})
-           [|(site :posts) |(site :pages)]))
-    """
-    {"_posts/2026-01-01-a.md" "---\n---\n\"A\" **b**.\n\nMore.\n"
-     "_posts/2026-01-02-b.md" "---\nexcerpt: \"Given.\"\n---\nText.\n"
-     "about.md" "---\n---\nAbout.\n"
-     "feed.xml" "---\n---\n<rss>**x**</rss>"})
+  ; The theme wraps strong text in a span and writes each item's HTML and
+  ; excerpt to <path>.out.
+  (h/copy "markdown" src)
   (build)
   (defn result [path] (parse (page path)))
   (is (== ["<p>“A” <span><strong>b</strong></span>.</p>\n<p>More.</p>\n"
@@ -113,7 +98,7 @@
 (deftest build-copies-static-files
   (make-theme "(defn build [site] [])"
               {"LICENSE" "MIT" "uploads/2019/a.jpg" "\xFF\xD8\x00" "_draft.txt" "no"})
-  (fixture/rmrf out)
+  (h/rmrf out)
   (build)
   (is (== "MIT" (page "LICENSE")))
   (is (== "\xFF\xD8\x00" (page "uploads/2019/a.jpg")))
@@ -155,7 +140,7 @@
     (defn build [site]
       [{:path "ok.html" :body "ok"} {:path "/bad" :body ""}])
     """)
-  (fixture/rmrf out)
+  (h/rmrf out)
   (message build)
   (is (nil? (os/stat (string out "/ok.html") :mode))))
 
@@ -166,7 +151,7 @@
 ; Site metadata
 
 (deftest build-gives-modified-times-and-time
-  ; The fixture is under tmp/, which Git ignores, so file times are used.
+  ; The site is under tmp/, which Git ignores, so file times are used.
   (make-theme
     """
     (defn build [site]
@@ -202,23 +187,23 @@
 
 (deftest build-replaces-destination
   (make-theme "(defn build [site] [{:path \"new.html\" :body \"new\"}])")
-  (fixture/rmrf out)
-  (fixture/make-site out {"stale.html" "old" "old/x.html" "old"})
+  (h/rmrf out)
+  (h/make-site out {"stale.html" "old" "old/x.html" "old"})
   (build)
   (is (== ["new.html"] (files out)))
   (is (== [] (siblings))))
 
 (deftest build-creates-destination
   (make-theme "(defn build [site] [{:path \"a/b.html\" :body \"x\"}])")
-  (fixture/rmrf out)
+  (h/rmrf out)
   (build)
   (is (== "x" (page "a/b.html")))
   (is (== [] (siblings))))
 
 (deftest build-keeps-paths
   (make-theme "(defn build [site] [{:path \"index.html\" :body \"new\"}])")
-  (fixture/rmrf out)
-  (fixture/make-site out {".gitkeep" "" ".git/HEAD" "ref" "stale.html" "old"
+  (h/rmrf out)
+  (h/make-site out {".gitkeep" "" ".git/HEAD" "ref" "stale.html" "old"
                           ".other" "x"})
   (build)
   (is (== "" (page ".gitkeep")))
@@ -232,16 +217,16 @@
     (def config {:keep ["keep/me.txt"]})
     (defn build [site] [{:path "index.html" :body "new"}])
     """)
-  (fixture/rmrf out)
-  (fixture/make-site out {"keep/me.txt" "kept" ".gitkeep" ""})
+  (h/rmrf out)
+  (h/make-site out {"keep/me.txt" "kept" ".gitkeep" ""})
   (build)
   (is (== "kept" (page "keep/me.txt")))
   (is (nil? (os/stat (string out "/.gitkeep") :mode))))
 
 (deftest build-refuses-to-write-a-kept-path
   (make-theme "(defn build [site] [{:path \".gitkeep\" :body \"x\"}])")
-  (fixture/rmrf out)
-  (fixture/make-site out {".gitkeep" "" "index.html" "old"})
+  (h/rmrf out)
+  (h/make-site out {".gitkeep" "" "index.html" "old"})
   (is (== "the site writes .gitkeep, which the destination keeps" (message build)))
   (is (== "old" (page "index.html")))
   (is (== "" (page ".gitkeep")))
@@ -250,8 +235,8 @@
 (deftest build-failure-leaves-destination
   (make-theme "(defn build [site] [{:path \"index.html\" :body \"new\"}])"
               {"bad/file" "x"})
-  (fixture/rmrf out)
-  (fixture/make-site out {"index.html" "old"})
+  (h/rmrf out)
+  (h/make-site out {"index.html" "old"})
   ; A static file that cannot be read makes copying fail.
   (os/chmod (string src "/bad/file") 0)
   (def msg (message build))
@@ -262,17 +247,17 @@
 
 (deftest build-removes-leftover-staging
   (make-theme "(defn build [site] [{:path \"index.html\" :body \"new\"}])")
-  (fixture/rmrf out)
-  (fixture/make-site (string dir "/.public.ecstatic-new") {"junk" ""})
-  (fixture/make-site (string dir "/.public.ecstatic-old") {"junk" ""})
+  (h/rmrf out)
+  (h/make-site (string dir "/.public.ecstatic-new") {"junk" ""})
+  (h/make-site (string dir "/.public.ecstatic-old") {"junk" ""})
   (build)
   (is (== ["index.html"] (files out)))
   (is (== [] (siblings))))
 
 (deftest build-keeps-destination-permissions
   (make-theme "(defn build [site] [{:path \"index.html\" :body \"new\"}])")
-  (fixture/rmrf out)
-  (fixture/make-site out {"index.html" "old"})
+  (h/rmrf out)
+  (h/make-site out {"index.html" "old"})
   (os/chmod out 8r750)
   (build)
   (is (== "rwxr-x---" (os/stat out :permissions))))
@@ -287,5 +272,5 @@
           (message #(site/build :source src :destination (string src "/_ecstatic.wattle")
                                 :quiet? true)))))
 
-(defer (fixture/rmrf dir)
+(defer (h/rmrf dir)
   (run-tests!))

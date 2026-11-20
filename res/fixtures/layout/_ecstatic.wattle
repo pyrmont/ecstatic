@@ -1,0 +1,8 @@
+; Builds one page with a function from a file beside the theme.
+
+(import ./_theme/layout)
+
+(def config {:title "Test"})
+
+(defn build [site]
+  [{:path "index.html" :body (layout/page (get-in site [:config :title]))}])

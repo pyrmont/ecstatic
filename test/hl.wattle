@@ -1,4 +1,5 @@
 (import ../deps/gum/test :prefix "")
+(import ../res/helpers/util :as h)
 
 (import ../lib/highlight)
 (import ../lib/hl/classes)
@@ -108,22 +109,15 @@
   (is (== ["a &amp; b" "" "c"] (highlight/lines nil "a & b\n\nc"))))
 
 (deftest load-grammars
-  (def dir "tmp/test/grammars")
-  (os/mkdir "tmp/test")
-  (os/mkdir dir)
-  (spit (string dir "/a.json") (json/encode {"scopeName" "source.a"
-                                             "patterns" [{"include" "source.b"}]}))
-  (spit (string dir "/b.json") (json/encode {"scopeName" "source.b"
-                                             "patterns" [{"match" "x" "name" "keyword.b"}]}))
-  (spit (string dir "/notes.txt") "not a grammar")
-  (spit (string dir "/._a.json") "\0")
+  ; Besides a.json, which includes b.json, the fixture has notes.txt and
+  ; ._a.json, which are not grammars.
+  (def dir (h/copy "grammars" "tmp/test/grammars"))
   (def gs (highlight/load-grammars dir))
   (is (== ["source.a" "source.b"] (sort (keys gs))))
   (is (== ["<span class=\"hl-keyword\">x</span>y"] (highlight/lines (gs "source.a") "xy\n")))
   (spit (string dir "/c.json") "[1]")
   (is (== (string dir "/c.json: not a TextMate grammar")
           (try (highlight/load-grammars dir) ([e] e))))
-  (each name (os/dir dir) (os/rm (string dir "/" name)))
-  (os/rmdir dir))
+  (h/rmrf dir))
 
 (run-tests!)

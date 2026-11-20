@@ -1,5 +1,5 @@
 (import ../deps/gum/test :prefix "")
-(import ./support/fixture)
+(import ../res/helpers/util :as h)
 
 (import ../lib/content)
 
@@ -9,7 +9,7 @@
   (try (do (f) nil) ([e] e)))
 
 (defn- read [files & config]
-  (fixture/make-site dir files)
+  (h/make-site dir files)
   (content/read-site dir (or (first config) {:offset "+0900"})))
 
 (defn- paths [xs]
@@ -163,5 +163,5 @@
   (is (content/markdown? "a.markdown"))
   (is (not (content/markdown? "a.html"))))
 
-(defer (fixture/rmrf dir)
+(defer (h/rmrf dir)
   (run-tests!))

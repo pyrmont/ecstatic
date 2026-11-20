@@ -1,0 +1,16 @@
+; Wraps each strong node in a span, and writes each post's and page's HTML
+; and excerpt to <path>.out.
+
+(defn smallcaps [root]
+  (each node (cmark/nodes root)
+    (when (= :strong (cmark/type node))
+      (cmark/insert-before! node (cmark/set-literal! (cmark/new root :html-inline) "<span>"))
+      (cmark/insert-after! node (cmark/set-literal! (cmark/new root :html-inline) "</span>")))))
+
+(def config {:markdown {:options [:smart :unsafe] :transforms [smallcaps]}})
+
+(defn build [site]
+  (map (fn [item]
+         {:path (string (item :path) ".out")
+          :body (string/format "%q" [(item :html) (item :excerpt)])})
+       [|(site :posts) |(site :pages)]))
