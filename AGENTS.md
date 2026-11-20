@@ -7,10 +7,6 @@ Clojure-like syntax that runs on a Zig rewrite of the Janet virtual machine.
 The executable is `ecstatic`. It is intended to replace Jekyll for
 articles.inqk.net and updates.inqk.net.
 
-`PLAN.md` holds the design decisions, the URLs each site must keep and the
-milestones. Read it before starting a milestone, and update it when a
-decision changes or a milestone is done.
-
 **Author**: Michael Camilleri
 **License**: MIT
 **Language**: Wattle
@@ -65,8 +61,11 @@ ecstatic/
 │   ├── ecstatic.1.predoc  # Man page source (Predoc)
 │   └── ecstatic.1         # Generated man page (committed)
 ├── info.edn             # Project and build declaration
+├── .github/workflows/
+│   ├── test.yml         # Builds Wattle, builds Ecstatic, runs the tests
+│   └── release.yml      # Builds release archives and drafts a GitHub release
 ├── CHANGELOG.md         # Changes by release, with an Unreleased section
-└── PLAN.md              # Design and milestones
+└── RELEASING.md         # Steps for making a release
 ```
 
 ## Themes
@@ -119,8 +118,9 @@ configuration's transforms. `site/build` gives every post and page `:html`
 config's `:markdown`, `{:options [...] :transforms [...]}`.
 
 Rendering uses cmark's C renderer. Jekyll used commonmarker's Ruby renderer;
-on both sites the only difference is the footnote markup (see milestone 3
-in `PLAN.md`).
+on both sites the only difference is the footnote markup. cmark-gfm takes
+footnote IDs from the label (`#fn-1`, `#fn-previous` rather than `#fn1`) and
+adds `data-footnote-*` and `aria-label` attributes. These IDs are kept.
 
 `deps/cmark-gfm/README.md` says what was vendored. To update cmark-gfm,
 replace `src/` from the release (without `main.c`), regenerate
@@ -265,7 +265,9 @@ man/man1/ecstatic.1` and commit both. Code blocks in Predoc use four
 backticks.
 
 `wattle res/tools/version.wattle <version>` sets the version in `info.edn`
-and the man page and updates `CHANGELOG.md`.
+and the man page and updates `CHANGELOG.md`. The version stays `DEVEL`
+between releases; `RELEASING.md` describes a release, which `fledge
+<version>` runs.
 
 ## Testing
 

@@ -1,0 +1,138 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Tag to release
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            platform: macos
+            arch: aarch64
+            target: aarch64-macos
+          - os: ubuntu-24.04-arm
+            platform: linux
+            arch: aarch64
+            target: aarch64-linux-musl
+          - os: ubuntu-latest
+            platform: linux
+            arch: x86_64
+            target: x86_64-linux-musl
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out Ecstatic
+        uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ inputs.version }}
+          path: ecstatic
+      - name: Check out Wattle
+        uses: actions/checkout@v7
+        with:
+          repository: pyrmont/wattle
+          path: wattle
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.1
+      - name: Build Wattle
+        run: zig build
+        working-directory: wattle
+      # test/executable.wattle runs zig-out/bin/ecstatic, so the tests use a
+      # native build before the release build replaces it.
+      - name: Build Ecstatic for tests
+        run: ../wattle/zig-out/bin/wattle -p ../wattle/zig-out build exe
+        working-directory: ecstatic
+      # The tests of cmark and onig load the libraries from zig-out/lib.
+      - name: Build native modules for tests
+        run: ../wattle/zig-out/bin/wattle -p ../wattle/zig-out build lib
+        working-directory: ecstatic
+      - name: Run Wattle tests
+        run: ../wattle/zig-out/bin/wattle -p ../wattle/zig-out test
+        working-directory: ecstatic
+      - name: Build Ecstatic
+        run: ../wattle/zig-out/bin/wattle -p ../wattle/zig-out build exe --release fast --target "${{ matrix.target }}"
+        working-directory: ecstatic
+      - name: Check executable
+        run: zig-out/bin/ecstatic --help
+        working-directory: ecstatic
+      - name: Package Ecstatic
+        env:
+          COPYFILE_DISABLE: "1"
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_PLATFORM: ${{ matrix.platform }}
+          RELEASE_ARCH: ${{ matrix.arch }}
+        run: |
+          set -eu
+          package="ecstatic-$RELEASE_VERSION"
+          mkdir -p "$package/man/man1" "$package/licenses"
+          cp zig-out/bin/ecstatic LICENSE README.md CHANGELOG.md "$package/"
+          cp man/man1/ecstatic.1 "$package/man/man1/"
+          cp deps/cmark-gfm/COPYING "$package/licenses/cmark-gfm.txt"
+          cp deps/gum/LICENSE "$package/licenses/gum.txt"
+          cp deps/oniguruma/LICENSE "$package/licenses/oniguruma.txt"
+          cp ../wattle/LICENSE "$package/licenses/wattle.txt"
+          tar -czf "${package}-${RELEASE_PLATFORM}-${RELEASE_ARCH}.tar.gz" "$package"
+        working-directory: ecstatic
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-${{ matrix.platform }}-${{ matrix.arch }}
+          path: ecstatic/ecstatic-${{ inputs.version }}-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out Ecstatic
+        uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ inputs.version }}
+      # The release's notes are its section of CHANGELOG.md: the lines after
+      # its heading and before the next. The changelog is wrapped to 80
+      # columns, but GitHub keeps the line breaks in the notes of a release,
+      # so each wrapped paragraph and entry is joined onto a single line.
+      - name: Extract the notes
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          set -eu
+          awk -v heading="## ${RELEASE_VERSION#v} " '
+            index($0, heading) == 1 { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md | awk '
+            /^$/ { if (started) print line; print ""; started = 0; next }
+            /^- / || !started { if (started) print line; line = $0; started = 1; next }
+            { sub(/^ +/, ""); line = line " " $0 }
+            END { if (started) print line }
+          ' > notes.md
+          if [ ! -s notes.md ]; then
+            echo "CHANGELOG.md has no section for ${RELEASE_VERSION#v}"
+            exit 1
+          fi
+      - name: Download artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: ./artifacts
+          merge-multiple: true
+      - name: Draft the release
+        uses: softprops/action-gh-release@v3
+        with:
+          draft: true
+          body_path: notes.md
+          files: ./artifacts/*.tar.gz
+          fail_on_unmatched_files: true
+          tag_name: ${{ inputs.version }}

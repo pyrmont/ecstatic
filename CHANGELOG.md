@@ -5,9 +5,11 @@ since the most recent release are under Unreleased.
 
 ## Unreleased
 
-- Initial scaffold. `ecstatic build` loads the theme `_ecstatic.wattle` from
-  the source directory, calls its `build` function and writes the pages it
-  returns to the destination directory.
+The first release of Ecstatic written in Wattle.
+
+- `ecstatic build` loads the theme `_ecstatic.wattle` from the source
+  directory, calls its `build` function and writes the pages it returns to
+  the destination directory.
 - `ecstatic build` reads the site's posts, pages and static files as Jekyll
   does, parses their YAML front matter and dates, gives posts URLs, passes
   them to the theme and copies the static files to the destination. A theme

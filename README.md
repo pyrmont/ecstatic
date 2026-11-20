@@ -28,6 +28,26 @@ in that:
 
 ## Building
 
+#### Pre-Built
+
+Pre-built binaries of `ecstatic` are available as tarballs via the
+[Releases][github-releases] section on GitHub for:
+
+- Linux (x86-64 and aarch64, statically linked)
+- macOS (aarch64)
+
+[github-releases]: https://github.com/pyrmont/ecstatic/releases
+
+```console
+$ curl -LO https://github.com/pyrmont/ecstatic/releases/latest/download/ecstatic-<version>-<platform>-<arch>.tar.gz
+$ tar -xzf ecstatic-<version>-<platform>-<arch>.tar.gz
+$ cd ecstatic-<version>
+```
+
+Each tarball holds the binary and the man page.
+
+#### From Source
+
 To build the `ecstatic` binary from source, you need [Zig][] 0.17.1 and
 Wattle, installed with the `<prefix>/share/wattle` support files. `-p` gives
 the Wattle install prefix, or set `WATTLE_PREFIX` instead:
