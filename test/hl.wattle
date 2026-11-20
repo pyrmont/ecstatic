@@ -110,7 +110,7 @@
 
 (deftest load-grammars
   ; Besides a.json, which includes b.json, the fixture has notes.txt and
-  ; ._a.json, which are not grammars.
+  ; .a.json, which are not grammars.
   (def dir (h/copy "grammars" "tmp/test/grammars"))
   (def gs (highlight/load-grammars dir))
   (is (== ["source.a" "source.b"] (sort (keys gs))))
