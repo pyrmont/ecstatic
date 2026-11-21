@@ -1,6 +1,6 @@
 {:name "ecstatic"
  :group "net.inqk"
- :version "0.1.0"
+ :version "DEVEL"
  :description "A static site generator"
  :author "Michael Camilleri"
  :license "MIT"
