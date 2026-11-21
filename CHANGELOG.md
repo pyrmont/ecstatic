@@ -3,7 +3,7 @@
 Each release lists what changed since the release before it. The changes made
 since the most recent release are under Unreleased.
 
-## Unreleased
+## 0.1.0 (2026-11-21)
 
 The first release of Ecstatic written in Wattle.
 
